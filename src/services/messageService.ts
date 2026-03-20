@@ -506,6 +506,14 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
       .single();
 
     if (metaConn?.access_token && !metaConn?.needs_reauth && waNumber?.phone_number_id) {
+      const normalizedMetaTo = limparTelefone(number);
+      const metaPayload = {
+        messaging_product: "whatsapp",
+        to: normalizedMetaTo,
+        type: "text",
+        text: { body: text },
+      };
+
       const metaResponse = await fetch(
         `https://graph.facebook.com/v21.0/${waNumber.phone_number_id}/messages`,
         {
@@ -514,12 +522,7 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
             "Content-Type": "application/json",
             "Authorization": `Bearer ${metaConn.access_token}`,
           },
-          body: JSON.stringify({
-            messaging_product: "whatsapp",
-            to: number,
-            type: "text",
-            text: { body: text },
-          }),
+          body: JSON.stringify(metaPayload),
         }
       );
 
@@ -529,6 +532,14 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
         }).catch(() => {});
         return metaResponse.json();
       }
+      const metaErrorText = await metaResponse.text().catch(() => "");
+      console.error("[META SEND] Falha no envio", {
+        status: metaResponse.status,
+        statusText: metaResponse.statusText,
+        phone_number_id: waNumber.phone_number_id,
+        to: normalizedMetaTo,
+        response: metaErrorText,
+      });
       // Se falhou, continuar para Evolution/UAZAPI como fallback
     }
   }

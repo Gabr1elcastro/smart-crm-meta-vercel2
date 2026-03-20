@@ -121,13 +121,30 @@ serve(async (req) => {
           console.log(`💬 [WEBHOOK] Processando ${messages.length} mensagem(ns)`);
 
           for (const msg of messages) {
+            const normalizedPhone = String(msg?.from ?? "").replace(/\D/g, "");
             const payload = {
-              phone: msg.from,
+              // Campos legados (mantidos para compatibilidade com o fluxo atual do n8n)
+              phone: normalizedPhone || msg.from,
+              telefone: normalizedPhone || msg.from,
+              telefone_id: normalizedPhone || msg.from,
               message: msg.text?.body ?? "[mídia]",
               id_cliente: idCliente,
               fromMe: false,
               instance_id: phoneNumberId,
               source: "meta_cloud_api",
+              // Novos campos para estrutura unificada (sem distinção visual no front)
+              canal: "meta_oficial",
+              meta_phone_number_id: phoneNumberId,
+              meta_waba_id: entry?.id ?? null,
+              meta_message_id: msg?.id ?? null,
+              meta_status: null,
+              payload_raw: {
+                entry_id: entry?.id ?? null,
+                field: change?.field ?? null,
+                metadata: value?.metadata ?? null,
+                contacts: value?.contacts ?? [],
+                message: msg,
+              },
             };
 
             console.log("📤 [WEBHOOK] Repassando para n8n:", JSON.stringify(payload));
@@ -153,6 +170,36 @@ serve(async (req) => {
               id_mensagem: status.id,
               status: status.status,
             });
+
+            // Repassa status para o mesmo fluxo n8n para permitir update em meta_status/meta_message_id.
+            const statusPayload = {
+              id_cliente: idCliente,
+              fromMe: true,
+              instance_id: phoneNumberId,
+              source: "meta_cloud_api_status",
+              canal: "meta_oficial",
+              meta_phone_number_id: phoneNumberId,
+              meta_waba_id: entry?.id ?? null,
+              meta_message_id: status?.id ?? null,
+              meta_status: status?.status ?? null,
+              payload_raw: {
+                entry_id: entry?.id ?? null,
+                field: change?.field ?? null,
+                metadata: value?.metadata ?? null,
+                status,
+              },
+            };
+
+            try {
+              const n8nResponse = await fetch(N8N_WEBHOOK_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(statusPayload),
+              });
+              console.log(`✅ [WEBHOOK] Status repassado ao n8n com status ${n8nResponse.status}`);
+            } catch (n8nError) {
+              console.error("❌ [WEBHOOK] Erro ao repassar status para n8n:", n8nError);
+            }
           }
         }
       }
