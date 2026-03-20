@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste de Compressão ZIP</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-area {
+            border: 2px dashed #ccc;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .result {
+            background: #f5f5f5;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Teste de Compressão ZIP</h1>
+    
+    <div class="test-area">
+        <h3>Selecione um arquivo para testar a compressão:</h3>
+        <input type="file" id="fileInput" accept="*/*">
+        <br><br>
+        <button onclick="testCompression()">Testar Compressão</button>
+        <button onclick="downloadTest()">Baixar ZIP de Teste</button>
+    </div>
+
+    <div id="results"></div>
+
+    <script>
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        async function testCompression() {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showResult('Por favor, selecione um arquivo primeiro.', 'error');
+                return;
+            }
+
+            showResult('🔄 Testando compressão...', 'info');
+
+            try {
+                // Criar ZIP usando método correto
+                const zip = new JSZip();
+                zip.file(file.name, file);
+                
+                // Gerar como Blob (método correto)
+                const zipBlob = await zip.generateAsync({
+                    type: 'blob',
+                    compression: 'DEFLATE',
+                    compressionOptions: { level: 6 },
+                    platform: 'DOS'
+                });
+
+                // Criar File
+                const zipFile = new File([zipBlob], file.name.replace(/\.[^/.]+$/, '') + '.zip', {
+                    type: 'application/zip'
+                });
+
+                // Validar ZIP
+                const testZip = new JSZip();
+                await testZip.loadAsync(zipBlob);
+                const files = Object.keys(testZip.files);
+
+                const compressionRatio = ((file.size - zipFile.size) / file.size * 100).toFixed(1);
+                
+                const result = `
+                    <h3>✅ Compressão Bem-sucedida!</h3>
+                    <p><strong>Arquivo Original:</strong> ${file.name} (${formatFileSize(file.size)})</p>
+                    <p><strong>Arquivo ZIP:</strong> ${zipFile.name} (${formatFileSize(zipFile.size)})</p>
+                    <p><strong>Redução:</strong> ${compressionRatio}%</p>
+                    <p><strong>Arquivos no ZIP:</strong> ${files.length}</p>
+                    <button onclick="downloadZip()">Baixar ZIP</button>
+                `;
+
+                showResult(result, 'success');
+
+                // Salvar ZIP para download
+                window.testZipBlob = zipBlob;
+                window.testZipName = zipFile.name;
+
+            } catch (error) {
+                showResult(`❌ Erro na compressão: ${error.message}`, 'error');
+            }
+        }
+
+        function downloadZip() {
+            if (window.testZipBlob) {
+                // Usar saveAs para criar ZIP válido
+                saveAs(window.testZipBlob, window.testZipName);
+            }
+        }
+
+        async function downloadTest() {
+            // Criar arquivo de teste
+            const testContent = 'Este é um arquivo de teste para verificar a compressão ZIP.\n'.repeat(1000);
+            const testFile = new File([testContent], 'teste.txt', { type: 'text/plain' });
+
+            try {
+                const zip = new JSZip();
+                zip.file(testFile.name, testFile);
+                
+                const zipBlob = await zip.generateAsync({
+                    type: 'blob',
+                    compression: 'DEFLATE',
+                    compressionOptions: { level: 6 },
+                    platform: 'DOS'
+                });
+
+                // Usar saveAs para criar ZIP válido
+                saveAs(zipBlob, 'teste.zip');
+                
+                showResult('✅ Arquivo de teste baixado! Teste abrindo o ZIP.', 'success');
+                
+            } catch (error) {
+                showResult(`❌ Erro ao criar arquivo de teste: ${error.message}`, 'error');
+            }
+        }
+
+        function showResult(message, type) {
+            const resultsDiv = document.getElementById('results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `result ${type}`;
+            resultDiv.innerHTML = message;
+            resultsDiv.appendChild(resultDiv);
+        }
+    </script>
+</body>
+</html>

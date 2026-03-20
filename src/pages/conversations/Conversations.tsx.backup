@@ -1,0 +1,3753 @@
+// Conversations Component - Sistema de mensagens WhatsApp
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { toast } from "sonner";
+import { format, isToday, isYesterday, addDays } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Search, Send, Paperclip, MoreVertical, Bot, User, CheckCircle, XCircle, RefreshCw, Mic, TrendingUp, Archive, PlayCircle, MessageSquare, GitBranch, Repeat, Tag } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+import { useAuth } from "@/contexts/auth";
+import { supabase } from "@/lib/supabase";
+import { sendMessage, sendAudioMessage, sendImageMessage, sendVideoMessage, sendMessageWithInstance } from '@/services/messageService';
+import { AudioPlayer } from '@/components/AudioPlayer';
+import { AudioPlayerSimples } from '@/components/AudioPlayerSimples';
+import { AudioPlayerRobust } from '@/components/AudioPlayerRobust';
+import { AudioRecorder } from '@/components/AudioRecorder';
+import { AudioRecorderMP3 } from '@/components/AudioRecorderMP3';
+import { ImageUploader } from '@/components/ImageUploader';
+import { VideoUploader } from '@/components/VideoUploader';
+import { useSearchParams } from "react-router-dom";
+import { NovaConversaNovoContatoForm } from "@/components/NovaConversaNovoContatoForm";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { leadsService, Lead } from "@/services/leadsService";
+import { clientesService } from "@/services/clientesService";
+import { Textarea } from "@/components/ui/textarea";
+import { departamentosService, Departamento } from "@/services/departamentosService";
+import { followupService } from "@/services/followupService";
+import { Link } from "react-router-dom";
+import EtiquetasDisplay from "@/components/EtiquetasDisplay";
+import { etiquetasService, Etiqueta } from "@/services/etiquetasService";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+
+// Interfaces
+interface Contact {
+  id: string;
+  name: string;
+  lastMessage: string;
+  lastMessageTime: string;
+  avatar?: string;
+  telefone_id: string;
+  atendimento_ia?: boolean;
+  atendimento_humano?: boolean;
+  status_conversa?: string | null;
+  lastMessageType?: 'texto' | 'audio' | 'imagem' | 'video' | null;
+  instance_id?: string; // Corrige erro TS
+}
+
+interface Conversation {
+  id: string;
+  user_id: string;
+  user_id_auth?: string;
+  conversa_id: string;
+  mensagem: string;
+  timestamp: string;
+  tipo: boolean;
+  telefone_id: string;
+  instance_id?: string;    // pode ser chamado de instance_id
+  instância_Id?: string;   // ou instância_Id em algumas tabelas
+  instancia_Id?: string;   // ou instancia_Id sem acento
+  name?: string;
+  created_at: string;
+  atendimento_ia?: boolean;
+  atendimento_humano?: boolean;
+  tipo_mensagem?: 'texto' | 'audio' | 'imagem' | 'video' | null;
+  url_arquivo?: string;
+}
+
+// Helper para normalizar telefones
+const normalizePhone = (phone: string): string => {
+  if (!phone) return '';
+  
+  try {
+    // Remove @s.whatsapp.net e qualquer outro caractere não numérico
+    // Primeiro, garantimos que estamos trabalhando com uma string
+    const phoneStr = String(phone);
+    
+    // Remove a parte @s.whatsapp.net e quaisquer caracteres não numéricos
+    const normalized = phoneStr.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+    
+    return normalized;
+  } catch (error) {
+    console.error('Erro ao normalizar telefone:', error, 'Telefone original:', phone);
+    // Em caso de erro, retorna o original ou vazio se não for uma string
+    return typeof phone === 'string' ? phone : '';
+  }
+};
+
+// Função para determinar a cor do estágio
+const getStageColor = (status: string | null): { bgColor: string; textColor: string; label: string } => {
+  if (!status) return { bgColor: '', textColor: '', label: '' };
+  
+  const normalizedStatus = status.toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  
+  switch (normalizedStatus) {
+    case 'leads':
+    case 'lead':
+      return { bgColor: 'bg-purple-100', textColor: 'text-purple-700', label: 'Lead' };
+      
+    case 'viu e nao respondeu':
+    case 'viu e não respondeu':
+      return { bgColor: 'bg-orange-100', textColor: 'text-orange-700', label: 'Viu e não respondeu' };
+      
+    case 'conversa em andamento':
+      return { bgColor: 'bg-blue-100', textColor: 'text-blue-700', label: 'Em andamento' };
+      
+    case 'parou de responder':
+      return { bgColor: 'bg-red-100', textColor: 'text-red-700', label: 'Parou de responder' };
+      
+    case 'oportunidade':
+      return { bgColor: 'bg-yellow-100', textColor: 'text-yellow-700', label: 'Oportunidade' };
+      
+    case 'ganho':
+      return { bgColor: 'bg-green-100', textColor: 'text-green-700', label: 'Ganho' };
+      
+    case 'perdido':
+      return { bgColor: 'bg-gray-100', textColor: 'text-gray-700', label: 'Perdido' };
+      
+    default:
+      return { bgColor: 'bg-gray-100', textColor: 'text-gray-700', label: status };
+  }
+};
+
+export const Conversations = () => {
+  // Estados principais
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [selectedContact, setSelectedContact] = useState<string | null>(null);
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [instanceId, setInstanceId] = useState<string | null>(null);
+  const [selectedContactAttendance, setSelectedContactAttendance] = useState<{ia: boolean, humano: boolean} | null>(null);
+  const [selectedContactStage, setSelectedContactStage] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [isGeneratingFollowup, setIsGeneratingFollowup] = useState(false);
+  const [attendanceMap, setAttendanceMap] = useState<Record<string, { ia: boolean, humano: boolean }>>({});
+  const [recentlySentMessages, setRecentlySentMessages] = useState<Set<string>>(new Set());
+  const [statusFilter, setStatusFilter] = useState<'em_andamento' | 'encerrada'>('em_andamento');
+  const [contactStatusMap, setContactStatusMap] = useState<Record<string, string | null>>({});
+  const [hasNewMessages, setHasNewMessages] = useState(false);
+  
+  // Estados para paginação e otimização
+  const [contactsPage, setContactsPage] = useState(1);
+  const [messagesPage, setMessagesPage] = useState(1);
+  const [hasMoreContacts, setHasMoreContacts] = useState(true);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const [loadingMoreContacts, setLoadingMoreContacts] = useState(false);
+  const [loadingMoreMessages, setLoadingMoreMessages] = useState(false);
+  const [contactsCache, setContactsCache] = useState<Map<string, Contact>>(new Map());
+  const [messagesCache, setMessagesCache] = useState<Map<string, Conversation[]>>(new Map());
+  const [lastMessageTimestamp, setLastMessageTimestamp] = useState<string | null>(null);
+  const ITEMS_PER_PAGE = 50;
+  
+  // Hook para pegar parâmetros da URL
+  const [searchParams] = useSearchParams();
+  const phoneFromUrl = searchParams.get('phone');
+  const [initialPhoneProcessed, setInitialPhoneProcessed] = useState(false);
+  
+  // Estado para armazenar rascunhos de mensagens por contato
+  const [messageDrafts, setMessageDrafts] = useState<Record<string, string>>({});
+  
+  // Estados para gravação de áudio
+  const [isRecording, setIsRecording] = useState(false);
+  const [showAudioRecorder, setShowAudioRecorder] = useState(false);
+  
+  // Estado para upload de imagem e vídeo
+  const [showImageUploader, setShowImageUploader] = useState(false);
+  const [showVideoUploader, setShowVideoUploader] = useState(false);
+  
+  const { user } = useAuth();
+
+  // Adicionar no início do componente Conversations:
+  const [showNewConversationModal, setShowNewConversationModal] = useState(false);
+  const [newConversationMode, setNewConversationMode] = useState<'existente' | 'novo'>('existente');
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+
+  // Adicionar estados para leads existentes e loading
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [loadingLeads, setLoadingLeads] = useState(false);
+
+  // Estado para modal de aviso de instância não conectada
+  const [showInstanceWarning, setShowInstanceWarning] = useState(false);
+
+  // Buscar clienteInfo ao carregar a tela ou mudar usuário - SEMPRE pelo id_cliente do contexto
+  const [clienteInfo, setClienteInfo] = useState<any>(null);
+  useEffect(() => {
+    const fetchClienteInfo = async () => {
+      if (user?.id_cliente) {
+        const info = await clientesService.getClienteByIdCliente(user.id_cliente);
+        setClienteInfo(info);
+      } else {
+        setClienteInfo(null);
+      }
+    };
+    fetchClienteInfo();
+  }, [user]);
+
+  // Buscar leads quando abrir modal de nova conversa - usando id_cliente do contexto
+  useEffect(() => {
+    if (showNewConversationModal && user?.id_cliente) {
+      setLoadingLeads(true);
+      leadsService.getLeadsByClientId(user.id_cliente).then((data) => {
+        setLeads(data);
+        setLoadingLeads(false);
+      });
+    }
+  }, [showNewConversationModal, user?.id_cliente]);
+
+  // Processar telefone da URL quando os contatos estiverem carregados
+  useEffect(() => {
+    if (phoneFromUrl && contacts.length > 0 && !initialPhoneProcessed) {
+      // Normalizar o telefone da URL
+      const normalizedUrlPhone = normalizePhone(phoneFromUrl);
+      
+      // Procurar o contato correspondente
+      const matchingContact = contacts.find(contact => {
+        const normalizedContactPhone = normalizePhone(contact.telefone_id);
+        return normalizedContactPhone === normalizedUrlPhone;
+      });
+      
+      if (matchingContact) {
+        // Selecionar o contato encontrado
+        handleContactChange(matchingContact.id);
+        toast.success(`Conversa com ${matchingContact.name} selecionada`);
+      } else {
+        // Se não encontrar conversa, mostrar mensagem
+        toast.info(`Não foi encontrada conversa com o número ${phoneFromUrl}`);
+      }
+      
+      // Marcar como processado para não repetir
+      setInitialPhoneProcessed(true);
+    }
+  }, [phoneFromUrl, contacts, initialPhoneProcessed]);
+
+  // Limpar todos os rascunhos ao carregar a página
+  useEffect(() => {
+    setMessageDrafts({});
+  }, []);
+
+  // 1. Buscar instance_id e client_id do usuário - SEMPRE pelo id_cliente do contexto
+  const [instanceId1, setInstanceId1] = useState<string | null>(null);
+  const [instanceId2, setInstanceId2] = useState<string | null>(null);
+  const [instanceName1, setInstanceName1] = useState<string | null>(null);
+  const [instanceName2, setInstanceName2] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user?.id_cliente) {
+      fetchUserInfo();
+    }
+  }, [user]);
+
+  const fetchUserInfo = async () => {
+    if (!user?.id_cliente) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('clientes_info')
+        .select('instance_id, instance_id_2, instance_name, instance_name_2, id')
+        .eq('id', user.id_cliente)
+        .single();
+
+      if (error) {
+        console.error('Erro ao buscar informações do cliente:', error);
+        return;
+      }
+
+      if (data?.instance_id) {
+        setInstanceId1(data.instance_id);
+      }
+      if (data?.instance_id_2) {
+        setInstanceId2(data.instance_id_2);
+      }
+      if (data?.instance_name) {
+        setInstanceName1(data.instance_name);
+      }
+      if (data?.instance_name_2) {
+        setInstanceName2(data.instance_name_2);
+      }
+      console.log('[CONVERSAS] instance_id encontrados:', { instance_id: data?.instance_id, instance_id_2: data?.instance_id_2, instance_name: data?.instance_name, instance_name_2: data?.instance_name_2 });
+    } catch (error) {
+      console.error('Erro ao processar informações do cliente:', error);
+    }
+  };
+
+  // Buscar client_id do contexto - agora sempre disponível via user.id_cliente
+  useEffect(() => {
+    if (user?.id_cliente) {
+      // Client ID disponível - sistema pronto
+      console.log('[CONVERSAS] id_cliente disponível:', user.id_cliente);
+    }
+  }, [user?.id_cliente]);
+
+  // 2. Função otimizada para buscar contatos com paginação
+  const fetchContacts = useCallback(async (page = 1, append = false) => {
+    if (!user?.id_cliente || (!instanceId1 && !instanceId2)) return;
+
+    try {
+      setLoadingMoreContacts(true);
+      
+      const offset = (page - 1) * ITEMS_PER_PAGE;
+      const ids = [instanceId1, instanceId2].filter(Boolean);
+      
+      // Buscar mensagens mais recentes para construir contatos
+      let { data: messagesData, error } = await supabase
+        .from('agente_conversacional_whatsapp')
+        .select('*')
+        .in('instance_id', ids)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + ITEMS_PER_PAGE - 1);
+
+      if (error) {
+        // Tentar com instância_Id (com acento)
+        const result = await supabase
+          .from('agente_conversacional_whatsapp')
+          .select('*')
+          .in('instância_Id', ids)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + ITEMS_PER_PAGE - 1);
+        messagesData = result.data;
+        error = result.error;
+      }
+
+      if (error) {
+        console.error('Erro ao buscar mensagens:', error);
+        return;
+      }
+
+      // Buscar leads para nomes
+      const { data: leadsData } = await supabase
+        .from('leads')
+        .select('telefone, nome, instance_id, atendimento_ia, atendimento_humano, data_criacao')
+        .eq('id_cliente', user.id_cliente);
+
+      const leadsMap = new Map<string, any>();
+      leadsData?.forEach(lead => {
+        if (lead.telefone) {
+          leadsMap.set(normalizePhone(lead.telefone), {
+            ...lead,
+            created_at: lead.data_criacao
+          });
+        }
+      });
+
+      // Construir contatos únicos
+      const contactsMap = new Map<string, Contact>();
+      
+      // Processar mensagens
+      messagesData?.forEach(msg => {
+        if (!msg.telefone_id) return;
+        const phone = normalizePhone(msg.telefone_id);
+        const existingContact = contactsMap.get(phone);
+        
+        if (!existingContact) {
+          const lead = leadsMap.get(phone);
+          contactsMap.set(phone, {
+            id: phone,
+            name: lead?.nome || msg.name || `Contato ${phone.slice(-4)}`,
+            lastMessage: msg.mensagem,
+            lastMessageTime: msg.timestamp || msg.created_at,
+            avatar: '/avatar.png',
+            telefone_id: msg.telefone_id,
+            atendimento_ia: msg.atendimento_ia || lead?.atendimento_ia,
+            atendimento_humano: msg.atendimento_humano || lead?.atendimento_humano,
+            lastMessageType: msg.tipo_mensagem || 'texto',
+            instance_id: msg.instance_id || msg.instância_Id || msg.instancia_Id || '',
+          });
+        } else {
+          const msgTime = new Date(msg.timestamp || msg.created_at);
+          const contactTime = new Date(existingContact.lastMessageTime);
+          if (msgTime > contactTime) {
+            existingContact.lastMessage = msg.mensagem;
+            existingContact.lastMessageTime = msg.timestamp || msg.created_at;
+            existingContact.lastMessageType = msg.tipo_mensagem || 'texto';
+          }
+        }
+      });
+
+      // Adicionar leads sem mensagens
+      leadsData?.forEach(lead => {
+        const phone = normalizePhone(lead.telefone);
+        if (ids.includes(lead.instance_id) && !contactsMap.has(phone)) {
+          contactsMap.set(phone, {
+            id: phone,
+            name: lead.nome || `Contato ${phone.slice(-4)}`,
+            lastMessage: '',
+            lastMessageTime: lead.data_criacao || lead.created_at || '',
+            avatar: '/avatar.png',
+            telefone_id: lead.telefone,
+            atendimento_ia: lead.atendimento_ia,
+            atendimento_humano: lead.atendimento_humano,
+            lastMessageType: 'texto',
+            instance_id: lead.instance_id || '',
+          });
+        }
+      });
+
+      const newContacts = Array.from(contactsMap.values())
+        .sort((a, b) => new Date(b.lastMessageTime).getTime() - new Date(a.lastMessageTime).getTime());
+
+      // Atualizar cache
+      newContacts.forEach(contact => {
+        contactsCache.set(contact.id, contact);
+      });
+
+      if (append) {
+        setContacts(prev => [...prev, ...newContacts]);
+      } else {
+        setContacts(newContacts);
+      }
+
+      setHasMoreContacts(newContacts.length === ITEMS_PER_PAGE);
+      setContactsPage(page);
+      
+    } catch (error) {
+      console.error('Erro ao buscar contatos:', error);
+    } finally {
+      setLoadingMoreContacts(false);
+    }
+  }, [user?.id_cliente, instanceId1, instanceId2, contactsCache]);
+
+  // 3. Função otimizada para buscar mensagens de um contato específico
+  const fetchContactMessages = useCallback(async (contactId: string, page = 1, append = false) => {
+    if (!contactId || (!instanceId1 && !instanceId2)) return;
+
+    try {
+      setLoadingMoreMessages(true);
+      
+      const offset = (page - 1) * ITEMS_PER_PAGE;
+      const ids = [instanceId1, instanceId2].filter(Boolean);
+      
+      // Verificar cache primeiro
+      const cacheKey = `${contactId}_${page}`;
+      const cachedMessages = messagesCache.get(cacheKey);
+      
+      if (cachedMessages && !append) {
+        setConversations(cachedMessages);
+        return;
+      }
+
+      // Buscar mensagens do contato específico
+      let { data, error } = await supabase
+        .from('agente_conversacional_whatsapp')
+        .select('*')
+        .in('instance_id', ids)
+        .eq('telefone_id', contactId)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + ITEMS_PER_PAGE - 1);
+
+      if (error) {
+        // Tentar com instância_Id (com acento)
+        const result = await supabase
+          .from('agente_conversacional_whatsapp')
+          .select('*')
+          .in('instância_Id', ids)
+          .eq('telefone_id', contactId)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + ITEMS_PER_PAGE - 1);
+        data = result.data;
+        error = result.error;
+      }
+
+      if (error) {
+        // Tentar com instancia_Id (sem acento)
+        const fallbackResult = await supabase
+          .from('agente_conversacional_whatsapp')
+          .select('*')
+          .in('instancia_Id', ids)
+          .eq('telefone_id', contactId)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + ITEMS_PER_PAGE - 1);
+        data = fallbackResult.data;
+        error = fallbackResult.error;
+      }
+
+      if (error) {
+        console.error('Erro ao buscar mensagens:', error);
+        return;
+      }
+
+      const messages = data || [];
+      
+      // Inverter ordem para exibição (mais antigas primeiro)
+      const orderedMessages = messages.reverse();
+
+      // Atualizar cache
+      messagesCache.set(cacheKey, orderedMessages);
+
+      if (append) {
+        setConversations(prev => [...prev, ...orderedMessages]);
+      } else {
+        setConversations(orderedMessages);
+      }
+
+      setHasMoreMessages(messages.length === ITEMS_PER_PAGE);
+      setMessagesPage(page);
+      
+      // Atualizar timestamp da última mensagem para polling
+      if (messages.length > 0) {
+        setLastMessageTimestamp(messages[messages.length - 1].created_at);
+      }
+      
+    } catch (error) {
+      console.error('Erro ao buscar mensagens do contato:', error);
+    } finally {
+      setLoadingMoreMessages(false);
+    }
+  }, [instanceId1, instanceId2, messagesCache]);
+            if (error) {
+              console.error('Erro ao carregar conversas:', error);
+              toast.error('Erro ao carregar conversas');
+              if (showLoading) setLoading(false);
+              return;
+            }
+          }
+        }
+      }
+      // Log para depuração
+      if (data) {
+        const porInstancia = {};
+        ids.forEach(id => {
+          porInstancia[id as string] = data.filter((msg: any) => msg.instance_id === id).length;
+        });
+        console.log('[CONVERSAS] Mensagens encontradas por instância:', porInstancia);
+        console.log('[CONVERSAS] Total de mensagens:', data.length);
+      }
+      setConversations(data || []);
+      // Log de contatos
+      if (data) {
+        const seenPhones = new Set();
+        (data || []).forEach(msg => {
+          if (msg.telefone_id) seenPhones.add(msg.telefone_id);
+        });
+        console.log('[CONVERSAS] Telefones únicos encontrados nas mensagens:', Array.from(seenPhones));
+      }
+    } catch (error) {
+      console.error('Erro ao carregar conversas:', error);
+      toast.error('Erro ao carregar conversas');
+    } finally {
+      if (showLoading) setLoading(false);
+    }
+  }, [user, instanceId1, instanceId2]);
+
+  // 4. Executar a busca de conversas quando instanceId1 ou instanceId2 estiverem disponíveis
+  useEffect(() => {
+    if (instanceId1 || instanceId2) {
+      fetchConversations();
+    }
+  }, [instanceId1, instanceId2, fetchConversations]);
+
+  // 5. Configuração da subscription para novas mensagens com instance_id
+  useEffect(() => {
+    if (!instanceId) return;
+    
+    // Cache para evitar processar a mesma mensagem múltiplas vezes
+    const processedMessages = new Set();
+    let lastProcessTime = 0;
+    
+    // Usar uma única subscription para evitar duplicação
+    const subscription = supabase
+      .channel(`whatsapp_messages_${instanceId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'agente_conversacional_whatsapp'
+        },
+        (payload) => {
+          const now = Date.now();
+          const newMsg = payload.new as any;
+          
+          // Criar chave única para esta mensagem
+          const messageKey = `${newMsg.conversa_id}-${newMsg.mensagem}-${newMsg.telefone_id}-${newMsg.tipo}`;
+          
+          // THROTTLE: Ignorar se processamos a mesma mensagem há menos de 100ms
+          if (processedMessages.has(messageKey) || (now - lastProcessTime) < 100) {
+            return;
+          }
+          
+          processedMessages.add(messageKey);
+          lastProcessTime = now;
+          
+          // Limpar cache antigo após 10 segundos
+          setTimeout(() => {
+            processedMessages.delete(messageKey);
+          }, 10000);
+          
+          // Verificar se a mensagem pertence a esta instância
+          const msgInstanceId = newMsg.instance_id || newMsg.instância_Id || newMsg.instancia_Id;
+          
+          if (msgInstanceId === instanceId) {
+            processNewMessage(newMsg);
+          }
+        }
+      )
+      .subscribe();
+      
+    // Função auxiliar para processar novas mensagens com deduplicação melhorada
+    const processNewMessage = (newMsg: any) => {
+      // Garantir que a mensagem está no formato correto
+      const conversation: Conversation = {
+        ...newMsg,
+        // Garantir campos obrigatórios
+        id: newMsg.id || `temp-${Date.now()}`,
+        user_id: newMsg.user_id || user?.id || '',
+        conversa_id: newMsg.conversa_id || '',
+        mensagem: newMsg.mensagem || '',
+        timestamp: newMsg.timestamp || newMsg.created_at || new Date().toISOString(),
+        tipo: newMsg.tipo !== undefined ? newMsg.tipo : false,
+        telefone_id: newMsg.telefone_id || '',
+        created_at: newMsg.created_at || new Date().toISOString()
+      };
+      
+      // Verificar se é uma mensagem que acabamos de enviar
+      const messageContent = conversation.mensagem;
+      const phoneId = conversation.telefone_id;
+      const recentlySentArray = Array.from(recentlySentMessages);
+      
+      const isRecentlySent = recentlySentArray.some(key => {
+        return key.includes(phoneId) && key.includes(messageContent);
+      });
+      
+      if (isRecentlySent && conversation.tipo === true) {
+        return; // Ignorar mensagem recentemente enviada
+      }
+      
+      // Verificar se é uma nova mensagem do contato atual
+      const normalizedMsgPhone = normalizePhone(conversation.telefone_id);
+      const isFromCurrentContact = selectedContact && (
+        normalizedMsgPhone === selectedContact || 
+        conversation.telefone_id === selectedContact
+      );
+      
+      // Se for uma nova mensagem recebida (não enviada) do contato atual, marcar como nova
+      if (isFromCurrentContact && !conversation.tipo) {
+        setHasNewMessages(true);
+      }
+      
+      // Atualiza a lista de conversas com deduplicação robusta
+      setConversations(prev => {
+        // Verificar duplicação por ID
+        const duplicateById = prev.some(m => m.id === conversation.id);
+        if (duplicateById) {
+          return prev;
+        }
+        
+        // Verificar duplicação por conteúdo e timestamp
+        const hasRecentDuplicate = prev.some(m => 
+          m.mensagem === conversation.mensagem &&
+          m.telefone_id === conversation.telefone_id &&
+          m.tipo === conversation.tipo &&
+          Math.abs(new Date(m.created_at).getTime() - new Date(conversation.created_at).getTime()) < 2000
+        );
+        
+        if (hasRecentDuplicate) {
+          return prev;
+        }
+        
+        const newList = [...prev, conversation];
+        
+        // Atualizar lista de contatos
+        const phoneIdNormalized = normalizePhone(conversation.telefone_id);
+        // TODO: Implementar atualização otimizada de contatos
+        
+        return newList;
+      });
+    };
+    
+    // Cleanup na desmontagem
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, [instanceId]); // APENAS instanceId como dependência
+
+  // Função para enviar mensagem
+  const handleSendMessage = async () => {
+    if (!message.trim() || !selectedContact || isSending) return;
+
+    setIsSending(true);
+
+    try {
+      // Pega o telefone do contato escolhido
+      const contact = contacts.find(c => c.id === selectedContact || normalizePhone(c.telefone_id) === selectedContact);
+      // Se não encontrar, tenta buscar nos leads
+      let telefoneEnvio = '';
+      if (contact?.telefone_id) {
+        telefoneEnvio = contact.telefone_id;
+      } else if (leads && selectedContact) {
+        const lead = leads.find(l => normalizePhone(l.telefone) === selectedContact || l.id.toString() === selectedContact);
+        if (lead) {
+          telefoneEnvio = lead.telefone;
+        }
+      }
+      if (!telefoneEnvio) {
+        toast.error('Erro: telefone não encontrado');
+        setIsSending(false);
+        return;
+      }
+
+      // Envio padrão Evolution (verificado em messageService.ts)
+      await sendMessageWithInstance(instanceNameAtivo, telefoneEnvio, message);
+
+      // Limpar o campo de texto
+      setMessage('');
+      // Limpar o rascunho do contato atual
+      if (selectedContact) {
+        setMessageDrafts(prev => {
+          const newDrafts = { ...prev };
+          delete newDrafts[selectedContact];
+          return newDrafts;
+        });
+      }
+      // Scroll para o fim da conversa
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+    } catch (error) {
+      console.error('Erro ao enviar mensagem:', error);
+      toast.error('Erro ao enviar mensagem');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // Salvar rascunho automaticamente quando o usuário digita (com debounce)
+  useEffect(() => {
+    if (selectedContact && message.trim() && !showAudioRecorder) {
+      const timeoutId = setTimeout(() => {
+        saveDraftForContact(selectedContact, message);
+      }, 500); // Salvar após 500ms de inatividade
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [message, selectedContact, showAudioRecorder]);
+
+  // 7. Filtra as mensagens do contato selecionado usando telefone normalizado
+  const selectedContactMessages = selectedContact
+    ? conversations
+        .filter(msg => {
+          const normalizedMsgPhone = normalizePhone(msg.telefone_id);
+          // Permitir que selectedContact seja tanto o id quanto o telefone normalizado
+          return (
+            normalizedMsgPhone === selectedContact ||
+            msg.telefone_id === selectedContact
+          );
+        })
+        .sort((a, b) => {
+          // Usar timestamp se disponível, senão created_at
+          const dateA = new Date(a.timestamp || a.created_at).getTime();
+          const dateB = new Date(b.timestamp || b.created_at).getTime();
+          return dateA - dateB; // Ordem cronológica crescente
+        })
+    : [];
+
+  // Função auxiliar para obter dados do contato selecionado, sempre priorizando o nome da tabela leads
+  function getSelectedContactInfo() {
+    // Tenta encontrar pelo id (telefone normalizado ou id do lead)
+    let contact = contacts.find(c => c.id === selectedContact || normalizePhone(c.telefone_id) === selectedContact);
+    // Sempre tenta buscar o nome atualizado na tabela leads
+    let nomeLead = '';
+    let telefone = '';
+    if (leads && selectedContact) {
+      const lead = leads.find(l => normalizePhone(l.telefone) === selectedContact || l.id.toString() === selectedContact);
+      if (lead) {
+        nomeLead = lead.nome;
+        telefone = lead.telefone;
+      }
+    }
+    // Se encontrou nome na leads, prioriza ele
+    if (nomeLead) {
+      return {
+        name: nomeLead,
+        telefone_id: telefone
+      };
+    }
+    // Se não encontrar, retorna o contato da lista
+    if (contact) {
+      return contact;
+    }
+    // Fallback: retorna apenas o telefone
+    if (selectedContact) {
+      return {
+        name: selectedContact,
+        telefone_id: selectedContact
+      };
+    }
+    return null;
+  }
+
+  // 8. Scroll para o final quando mensagens mudam (sempre rolar para o final)
+  useEffect(() => {
+    if (selectedContactMessages.length > 0 && messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'auto' });
+    }
+  }, [selectedContactMessages.length]);
+
+  const fetchContactAttendance = async (phoneNumber: string) => {
+    if (!user?.id_cliente) {
+      console.error('id_cliente não disponível');
+      return;
+    }
+
+    try {
+      const normalizedPhone = normalizePhone(phoneNumber);
+      
+      const { data, error } = await supabase
+        .from('leads')
+        .select('atendimento_ia, atendimento_humano, status, status_conversa')
+        .eq('telefone', normalizedPhone)
+        .eq('id_cliente', user.id_cliente)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Erro ao buscar tipo de atendimento:', error);
+        setSelectedContactAttendance(null);
+        setSelectedContactStage(null);
+        return;
+      }
+
+      if (data) {
+        const newAttendance = {
+          ia: Boolean(data.atendimento_ia),
+          humano: Boolean(data.atendimento_humano)
+        };
+        setSelectedContactAttendance(newAttendance);
+        setSelectedContactStage(data.status || null);
+      } else {
+        setSelectedContactAttendance(null);
+        setSelectedContactStage(null);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar tipo de atendimento:', error);
+      setSelectedContactAttendance(null);
+      setSelectedContactStage(null);
+    }
+  };
+
+  const handleAIAttendance = async () => {
+    if (!selectedContact || !user?.id_cliente) {
+      toast.error('Erro: informações incompletas');
+      return;
+    }
+
+    // Verifica se há chatbot ativo e selecionado
+    if (!availableChatbots || availableChatbots.length === 0 || !selectedChatbotId) {
+      toast.error('Para ativar o atendimento por IA, é necessário ter um chatbot ativo e selecionado nas configurações.');
+      return;
+    }
+    
+    try {
+      const contact = contacts.find(c => c.id === selectedContact);
+      if (!contact?.telefone_id) {
+        toast.error('Erro: contato não encontrado');
+        return;
+      }
+      const phoneNumber = normalizePhone(contact.telefone_id);
+      const { data: leadData, error: fetchError } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('telefone', phoneNumber)
+        .eq('id_cliente', user.id_cliente)
+        .maybeSingle();
+      if (fetchError) {
+        console.error('Erro ao buscar lead:', fetchError);
+        toast.error('Erro ao buscar informações do contato');
+        return;
+      }
+      if (!leadData) {
+        toast.error('Contato não encontrado no sistema');
+        return;
+      }
+      const { data: updateData, error: updateError } = await supabase
+        .from('leads')
+        .update({
+          atendimento_ia: true,
+          atendimento_humano: false
+        })
+        .eq('id', leadData.id)
+        .select();
+      if (updateError) {
+        console.error('Erro ao atualizar tipo de atendimento:', updateError);
+        toast.error('Erro ao transferir para atendimento por IA');
+        return;
+      }
+      setSelectedContactAttendance({
+        ia: true,
+        humano: false
+      });
+      toast.success('Atendimento transferido para IA');
+      fetchAttendancesForContacts(contacts.map(c => c.telefone_id));
+    } catch (error) {
+      console.error('Erro ao processar atendimento por IA:', error);
+      toast.error('Erro ao transferir atendimento');
+    }
+  };
+
+  const handleHumanAttendance = async () => {
+    if (!selectedContact || !user?.id_cliente) {
+      toast.error('Erro: informações incompletas');
+      return;
+    }
+    
+    try {
+      const contact = contacts.find(c => c.id === selectedContact);
+      if (!contact?.telefone_id) {
+        toast.error('Erro: contato não encontrado');
+        return;
+      }
+      
+      const phoneNumber = normalizePhone(contact.telefone_id);
+      
+      const { data: leadData, error: fetchError } = await supabase
+        .from('leads')
+        .select('*')
+        .eq('telefone', phoneNumber)
+        .eq('id_cliente', user.id_cliente)
+        .maybeSingle();
+
+      if (fetchError) {
+        console.error('Erro ao buscar lead:', fetchError);
+        toast.error('Erro ao buscar informações do contato');
+        return;
+      }
+
+      if (!leadData) {
+        // Se não existe lead, criar um novo lead básico
+        console.log('Lead não encontrado, criando novo lead...');
+        
+        const { data: newLead, error: createError } = await supabase
+          .from('leads')
+          .insert({
+            telefone: phoneNumber,
+            nome: contact?.name || `Contato ${phoneNumber.slice(-4)}`,
+            id_cliente: user.id_cliente,
+            status_conversa: 'Em andamento',
+            status: 'Leads',
+            origem: 'WhatsApp',
+            atendimento_humano: true,
+            atendimento_ia: false,
+            created_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+          
+        if (createError) {
+          console.error('Erro ao criar lead:', createError);
+          toast.error('Erro ao criar novo contato');
+          return;
+        }
+        
+        console.log('Lead criado com sucesso:', newLead);
+        const normalizedPhone = normalizePhone(phoneNumber);
+        setContactStatusMap(prev => ({
+          ...prev,
+          [normalizedPhone]: 'Em andamento'
+        }));
+        
+        // Recarregar os dados de todos os contatos
+        const phones = contacts.map(c => c.telefone_id);
+        await fetchAttendancesForContacts(phones);
+        
+        toast.success('Atendimento humano iniciado com sucesso');
+        return;
+      }
+      
+      // Atualizar o lead existente para atendimento humano
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          atendimento_humano: true,
+          atendimento_ia: false,
+          status_conversa: 'Em andamento'
+        })
+        .eq('id', leadData.id);
+      
+      if (error) {
+        console.error('Erro ao atualizar tipo de atendimento:', error);
+        toast.error('Erro ao transferir para atendimento humano');
+        return;
+      }
+      
+      // Atualizar o mapa de status local
+      const normalizedPhone = normalizePhone(phoneNumber);
+      setContactStatusMap(prev => ({
+        ...prev,
+        [normalizedPhone]: 'Em andamento'
+      }));
+      
+      // Recarregar os dados de todos os contatos
+      const phones = contacts.map(c => c.telefone_id);
+      await fetchAttendancesForContacts(phones);
+      
+      toast.success('Atendimento humano iniciado com sucesso');
+    } catch (error) {
+      console.error('Erro ao processar atendimento humano:', error);
+      toast.error('Erro ao transferir atendimento');
+    }
+  };
+
+  const handleResumeConversation = async () => {
+    if (!selectedContact || !user?.id_cliente) return;
+    
+    try {
+      // Buscar o telefone_id do contato selecionado
+      const contact = contacts.find(c => c.id === selectedContact);
+      if (!contact?.telefone_id) {
+        toast.error('Erro: contato não encontrado');
+        return;
+      }
+      
+      // Remover o sufixo @s.whatsapp.net do número de telefone
+      const phoneNumber = contact.telefone_id.replace('@s.whatsapp.net', '');
+      
+      // Primeiro, buscar o lead específico
+      const { data: leadData, error: fetchError } = await supabase
+        .from('leads')
+        .select('id, status_conversa')
+        .eq('telefone', phoneNumber)
+        .eq('id_cliente', user.id_cliente)
+        .maybeSingle();
+
+      if (fetchError) {
+        console.error('Erro ao buscar lead:', fetchError);
+        toast.error('Erro ao buscar informações do contato');
+        return;
+      }
+
+      if (!leadData) {
+        // Se não existe lead, apenas atualizar o estado local
+        console.log('Lead não encontrado no banco, atualizando apenas localmente');
+        const normalizedPhone = normalizePhone(phoneNumber);
+        setContactStatusMap(prev => ({
+          ...prev,
+          [normalizedPhone]: 'Em andamento'
+        }));
+        
+        // Recarregar os dados de todos os contatos
+        const phones = contacts.map(c => c.telefone_id);
+        await fetchAttendancesForContacts(phones);
+        
+        toast.success('Conversa retomada com sucesso');
+        
+        if (statusFilter === 'encerrada') {
+          setStatusFilter('em_andamento');
+        }
+        return;
+      }
+      
+      // Verificar se a conversa está encerrada
+      if (leadData.status_conversa !== 'Encerrada') {
+        toast.info('Esta conversa já está em andamento');
+        return;
+      }
+      
+      // Atualizar o status_conversa para "Em andamento"
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          status_conversa: 'Em andamento'
+        })
+        .eq('id', leadData.id);
+      
+      if (error) {
+        console.error('Erro ao retomar conversa:', error);
+        toast.error('Erro ao retomar conversa');
+        return;
+      }
+      
+      // Atualizar o mapa de status local
+      const normalizedPhone = normalizePhone(phoneNumber);
+      setContactStatusMap(prev => ({
+        ...prev,
+        [normalizedPhone]: 'Em andamento'
+      }));
+      
+      // Recarregar os dados de todos os contatos
+      const phones = contacts.map(c => c.telefone_id);
+      await fetchAttendancesForContacts(phones);
+      
+      toast.success('Conversa retomada com sucesso');
+      
+      // Se o filtro atual for "encerrada", mudar para "em_andamento" para continuar vendo a conversa
+      if (statusFilter === 'encerrada') {
+        setStatusFilter('em_andamento');
+      }
+    } catch (error) {
+      console.error('Erro ao processar retomada:', error);
+      toast.error('Erro ao retomar conversa');
+    }
+  };
+
+  // Atualizar o tipo de atendimento quando um contato é selecionado
+  useEffect(() => {
+    if (selectedContact) {
+      const phoneNumber = normalizePhone(selectedContact);
+      fetchContactAttendance(phoneNumber);
+    } else {
+      setSelectedContactAttendance(null);
+      setSelectedContactStage(null);
+    }
+  }, [selectedContact]);
+
+  // Função para buscar tipos de atendimento dos contatos
+  const fetchAttendancesForContacts = async (phones: string[]) => {
+    if (!user?.id_cliente || phones.length === 0) return;
+
+    // Telefones normalizados (sem @s.whatsapp.net)
+    const normalizedPhones = phones.map(phone => normalizePhone(phone));
+
+    const { data, error } = await supabase
+      .from('leads')
+      .select('telefone, atendimento_ia, atendimento_humano, status_conversa')
+      .in('telefone', normalizedPhones)
+      .eq('id_cliente', user.id_cliente);
+
+    if (!error && data) {
+      // Cria um mapa telefone -> tipo de atendimento
+      const map: Record<string, { ia: boolean, humano: boolean }> = {};
+      const statusMap: Record<string, string | null> = {};
+      
+      data.forEach(lead => {
+        map[lead.telefone] = {
+          ia: !!lead.atendimento_ia,
+          humano: !!lead.atendimento_humano
+        };
+        statusMap[lead.telefone] = lead.status_conversa;
+      });
+      
+      setAttendanceMap(map);
+      setContactStatusMap(statusMap);
+    }
+  };
+
+  // Chama a busca dos tipos de atendimento sempre que a lista de contatos mudar
+  useEffect(() => {
+    if (contacts.length > 0) {
+      const phones = contacts.map(c => c.telefone_id);
+      fetchAttendancesForContacts(phones);
+    }
+  }, [contacts, user?.id_cliente]);
+
+  // Subscription para mudanças no status das conversas
+  useEffect(() => {
+    if (!user?.id_cliente) return;
+
+    // Criar subscription para mudanças na tabela leads
+    const subscription = supabase
+      .channel(`leads_status_${user.id_cliente}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'leads',
+          filter: `id_cliente=eq.${user.id_cliente}`
+        },
+        (payload) => {
+          console.log('Mudança detectada na tabela leads:', payload);
+          
+          // Recarregar os dados quando houver mudança
+          if (contacts.length > 0) {
+            const phones = contacts.map(c => c.telefone_id);
+            fetchAttendancesForContacts(phones);
+          }
+          
+          // Se a conversa atual foi modificada, atualizar o estado local
+          if (selectedContact && payload.new) {
+            const contact = contacts.find(c => c.id === selectedContact);
+            if (contact) {
+              const phoneNumber = normalizePhone(contact.telefone_id);
+              const updatedLead = payload.new as any;
+              
+              if (updatedLead.telefone === phoneNumber) {
+                // Atualizar o tipo de atendimento
+                setSelectedContactAttendance({
+                  ia: Boolean(updatedLead.atendimento_ia),
+                  humano: Boolean(updatedLead.atendimento_humano)
+                });
+                
+                // Atualizar o estágio
+                setSelectedContactStage(updatedLead.status || null);
+              }
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    // Cleanup
+    return () => {
+      supabase.removeChannel(subscription);
+    };
+  }, [user?.id_cliente, contacts, selectedContact]);
+
+  // Função para formatar o tempo na lista de conversas (como WhatsApp)
+  const formatContactTime = (dateString: string): string => {
+    const messageDate = new Date(dateString);
+    
+    // Se a data for inválida, retornar vazio
+    if (isNaN(messageDate.getTime())) {
+      return "";
+    }
+    
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    // Comparar apenas ano, mês e dia
+    const messageDateOnly = messageDate.toLocaleDateString('pt-BR');
+    const todayDateOnly = today.toLocaleDateString('pt-BR');
+    const yesterdayDateOnly = yesterday.toLocaleDateString('pt-BR');
+    
+    if (messageDateOnly === todayDateOnly) {
+      // Hoje: mostrar apenas horário (HH:MM)
+      return format(messageDate, 'HH:mm', { locale: ptBR });
+    } else if (messageDateOnly === yesterdayDateOnly) {
+      // Ontem: mostrar "Ontem"
+      return "Ontem";
+    } else {
+      // Mais antigo: mostrar data (DD/MM/YYYY)
+      return format(messageDate, 'dd/MM/yyyy', { locale: ptBR });
+    }
+  };
+
+  // Função para formatar a data do separador (similar ao WhatsApp)
+  const formatDateSeparator = (date: Date): string => {
+    // Validar se a data é válida
+    const messageDate = new Date(date);
+    
+    // Se a data for inválida, retornar uma string padrão
+    if (isNaN(messageDate.getTime())) {
+      console.error('Data inválida recebida:', date);
+      return "Data inválida";
+    }
+    
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    // Comparar apenas ano, mês e dia (ignorando horário)
+    const messageDateString = messageDate.toLocaleDateString('pt-BR');
+    const todayString = today.toLocaleDateString('pt-BR');
+    const yesterdayString = yesterday.toLocaleDateString('pt-BR');
+    
+    if (messageDateString === todayString) {
+      return "Hoje";
+    } else if (messageDateString === yesterdayString) {
+      return "Ontem";
+    } else {
+      // Validar novamente antes de usar format da date-fns
+      try {
+        return format(messageDate, "d 'de' MMMM 'de' yyyy", { locale: ptBR });
+      } catch (error) {
+        console.error('Erro ao formatar data:', error);
+        return messageDateString; // Retornar formato brasileiro simples
+      }
+    }
+  };
+
+  // Função para verificar se duas datas são do mesmo dia
+  const isSameDay = (date1: Date, date2: Date): boolean => {
+    return format(date1, 'yyyy-MM-dd') === format(date2, 'yyyy-MM-dd');
+  };
+
+  // Função para agrupar mensagens por data
+  const groupMessagesByDate = (messages: Conversation[]) => {
+    const grouped: Array<{ date: string; dateObject: Date; messages: Conversation[] }> = [];
+    let currentDate: string | null = null;
+    let currentDateObject: Date | null = null;
+    let currentGroup: Conversation[] = [];
+
+    messages.forEach((message) => {
+      // Validar e normalizar data da mensagem
+      const messageDate = new Date(message.timestamp || message.created_at);
+      
+      // Se a data for inválida, pular esta mensagem
+      if (isNaN(messageDate.getTime())) {
+        return;
+      }
+      
+      const dateString = messageDate.toLocaleDateString('pt-BR');
+      
+      if (currentDate !== dateString) {
+        // Se há um grupo anterior, adiciona-o ao resultado
+        if (currentDate !== null && currentDateObject !== null && currentGroup.length > 0) {
+          grouped.push({ 
+            date: currentDate, 
+            dateObject: currentDateObject,
+            messages: [...currentGroup] 
+          });
+        }
+        
+        // Inicia um novo grupo
+        currentDate = dateString;
+        currentDateObject = new Date(messageDate); // Copiar a data válida
+        currentGroup = [message];
+      } else {
+        // Adiciona a mensagem ao grupo atual
+        currentGroup.push(message);
+      }
+    });
+
+    // Adiciona o último grupo
+    if (currentDate !== null && currentDateObject !== null && currentGroup.length > 0) {
+      grouped.push({ 
+        date: currentDate, 
+        dateObject: currentDateObject,
+        messages: currentGroup 
+      });
+    }
+
+    return grouped;
+  };
+
+  // Função para acionar o follow-up automático
+  const handleAutomaticFollowup = async () => {
+    console.log('[Followup] selectedContact:', selectedContact);
+    console.log('[Followup] user.id_cliente:', user?.id_cliente);
+    if (!selectedContact || !user?.id_cliente) {
+      toast.error('Erro: informações do contato ausentes');
+      return;
+    }
+
+    // Buscar contato pelo id ou telefone normalizado
+    let contact = contacts.find(c => c.id === selectedContact);
+    if (!contact) {
+      contact = contacts.find(c => normalizePhone(c.telefone_id) === normalizePhone(selectedContact));
+      console.log('[Followup] Tentando buscar contato pelo telefone normalizado:', normalizePhone(selectedContact), contact);
+    }
+    console.log('[Followup] Contato encontrado:', contact);
+
+    // Buscar o lead correspondente para pegar o instance_id correto
+    const lead = leads.find(l => normalizePhone(l.telefone) === normalizePhone(contact?.telefone_id));
+    const instanceIdToUse = lead?.instance_id || contact?.instance_id;
+    console.log('[Followup] instanceIdToUse:', instanceIdToUse);
+
+    if (!contact?.telefone_id || !instanceIdToUse) {
+      toast.error('Erro: telefone ou instância do contato não encontrado');
+      return;
+    }
+
+    setIsGeneratingFollowup(true);
+    
+    // Mostrar toast de loading
+    const loadingToast = toast.loading(
+      <div className="flex items-center gap-2">
+        <RefreshCw className="h-4 w-4 animate-spin" />
+        <span>Gerando follow-up...</span>
+      </div>
+    );
+
+    try {
+      // 1. Acionar o webhook para gerar o follow-up
+      const response = await fetch('https://webhook.dev.usesmartcrm.com/webhook/followup-auto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telefone_id: contact.telefone_id,
+          instance_id: instanceIdToUse
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Falha ao gerar follow-up');
+      }
+
+      // 2. Aguardar um momento para o n8n processar e salvar no banco
+      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      // 3. Buscar o follow-up gerado da tabela leads
+      const phoneNumber = normalizePhone(contact.telefone_id);
+      const { data: leadData, error: fetchError } = await supabase
+        .from('leads')
+        .select('follow_up')
+        .eq('telefone', phoneNumber)
+        .eq('id_cliente', user.id_cliente)
+        .single();
+
+      if (fetchError) {
+        console.error('Erro ao buscar follow-up:', fetchError);
+        toast.error('Erro ao buscar follow-up gerado');
+        return;
+      }
+
+      if (leadData?.follow_up) {
+        setMessage(leadData.follow_up); // Preenche a caixa de texto
+        
+        // Dismiss loading toast
+        toast.dismiss(loadingToast);
+        
+        // Show success toast with dismiss button
+        toast.success(
+          <div className="flex items-center justify-between gap-2">
+            <span>Follow-up gerado! Revise e envie manualmente.</span>
+            <button 
+              onClick={() => toast.dismiss()} 
+              className="ml-2 text-gray-500 hover:text-gray-700"
+            >
+              ✕
+            </button>
+          </div>,
+          {
+            duration: 5000, // 5 segundos
+            dismissible: true
+          }
+        );
+      } else {
+        toast.error('Não foi possível gerar o follow-up.');
+      }
+    } catch (error) {
+      console.error('Erro ao gerar follow-up:', error);
+      toast.error('Erro ao gerar follow-up automático');
+    } finally {
+      setIsGeneratingFollowup(false);
+      // Dismiss loading toast if it's still showing
+      toast.dismiss(loadingToast);
+    }
+  };
+
+  // Função para salvar rascunho do contato atual
+  const saveDraftForContact = (contactId: string | null, draftMessage: string) => {
+    if (contactId && draftMessage.trim()) {
+      setMessageDrafts(prev => ({
+        ...prev,
+        [contactId]: draftMessage
+      }));
+    } else if (contactId && !draftMessage.trim()) {
+      // Se a mensagem está vazia, remover o rascunho
+      setMessageDrafts(prev => {
+        const newDrafts = { ...prev };
+        delete newDrafts[contactId];
+        return newDrafts;
+      });
+    }
+  };
+
+  // Função para carregar rascunho de um contato
+  const loadDraftForContact = (contactId: string | null): string => {
+    return contactId ? (messageDrafts[contactId] || '') : '';
+  };
+
+  // Função personalizada para trocar contato
+  const handleContactChange = (newContactId: string) => {
+    // Salvar rascunho do contato atual (se houver)
+    if (selectedContact) {
+      saveDraftForContact(selectedContact, message);
+    }
+    
+    // Limpar estado de novas mensagens ao trocar de contato
+    setHasNewMessages(false);
+    
+    // Trocar para o novo contato
+    setSelectedContact(newContactId);
+    
+    // Carregar rascunho do novo contato
+    const newContactDraft = loadDraftForContact(newContactId);
+    setMessage(newContactDraft);
+  };
+
+  // Função para fazer upload do áudio para o Supabase Storage
+  const uploadAudioToStorage = async (audioBlob: Blob): Promise<string> => {
+    // Detectar formato baseado no tipo real do blob
+    const blobType = audioBlob.type;
+    const customExtension = (audioBlob as any)._extension;
+    
+    let extension = '.mp3'; // padrão MP3 para compatibilidade
+    let contentType = 'audio/mpeg'; // padrão MP3
+    
+    // Usar extensão customizada se disponível
+    if (customExtension) {
+      extension = `.${customExtension}`;
+      console.log('📎 Usando extensão customizada:', extension);
+      
+      // Ajustar contentType baseado na extensão
+      if (customExtension === 'mp3') {
+        contentType = 'audio/mpeg';
+      } else if (customExtension === 'wav') {
+        contentType = 'audio/wav';
+      } else if (customExtension === 'ogg') {
+        contentType = 'audio/ogg';
+      } else if (customExtension === 'webm') {
+        contentType = 'audio/webm';
+      }
+    } else {
+      // Detectar baseado no MIME type
+      if (blobType.includes('mp4')) {
+        extension = '.mp4';
+        contentType = 'audio/mp4';
+      } else if (blobType.includes('aac')) {
+        extension = '.aac';
+        contentType = 'audio/aac';
+      } else if (blobType.includes('mpeg') || blobType.includes('mp3')) {
+        extension = '.mp3';
+        contentType = 'audio/mpeg';
+      } else if (blobType.includes('webm')) {
+        extension = '.webm';
+        contentType = 'audio/webm';
+      } else if (blobType.includes('ogg')) {
+        extension = '.ogg';
+        contentType = 'audio/ogg';
+      } else if (blobType.includes('wav')) {
+        extension = '.wav';
+        contentType = 'audio/wav';
+      } else {
+        // Fallback para MP3
+        extension = '.mp3';
+        contentType = 'audio/mpeg';
+      }
+    }
+    
+    console.log('📤 Upload de áudio:', {
+      blobType: audioBlob.type,
+      blobSize: audioBlob.size,
+      detectedExtension: extension,
+      contentType: contentType
+    });
+    
+    // Gerar nome único com extensão correta
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substr(2, 9);
+    const fileName = `audio_${timestamp}_${random}${extension}`;
+    
+    console.log('🎤 Iniciando upload de áudio:', {
+      fileName,
+      blobSize: audioBlob.size,
+      blobType: audioBlob.type,
+      uploadType: contentType,
+      extension,
+      timestamp: new Date(timestamp).toLocaleString('pt-BR')
+    });
+
+    try {
+      // Verificar se o blob tem conteúdo
+      if (audioBlob.size === 0) {
+        throw new Error('Arquivo de áudio vazio');
+      }
+
+      // Verificar tamanho (WhatsApp tem limite de ~16MB)
+      if (audioBlob.size > 16 * 1024 * 1024) {
+        throw new Error('Arquivo de áudio muito grande (máximo 16MB)');
+      }
+
+      const { data, error } = await supabase.storage
+        .from('audioswpp')
+        .upload(fileName, audioBlob, {
+          contentType: contentType,
+          upsert: false,
+          cacheControl: '3600'
+        });
+
+      if (error) {
+        console.error('❌ Erro detalhado no upload:', error);
+        
+        // Verificar se é problema de RLS
+        if (error.message.includes('row-level security') || error.message.includes('RLS')) {
+          throw new Error(`Erro de permissão no Storage. Execute SOLUCAO-RAPIDA-RLS.sql
+
+Erro original: ${error.message}`);
+        }
+        
+        throw new Error(`Erro ao fazer upload do áudio: ${error.message}`);
+      }
+
+      console.log('✅ Upload realizado com sucesso:', data);
+
+      // Obter URL pública do arquivo
+      const { data: urlData } = supabase.storage
+        .from('audioswpp')
+        .getPublicUrl(data.path);
+
+      const finalUrl = urlData.publicUrl;
+      console.log('🔗 URL pública gerada:', finalUrl);
+      
+      // Testar se a URL é acessível
+      try {
+        const testResponse = await fetch(finalUrl, { method: 'HEAD' });
+        console.log('🌐 Teste de URL:', {
+          status: testResponse.status,
+          accessible: testResponse.ok,
+          contentType: testResponse.headers.get('content-type'),
+          extension: extension
+        });
+        
+        if (testResponse.ok) {
+          console.log('🎉 URL do áudio totalmente acessível!');
+        } else {
+          console.warn('⚠️ URL pode não estar acessível:', testResponse.status);
+        }
+      } catch (testError) {
+        console.warn('⚠️ Não foi possível testar a URL:', testError);
+      }
+
+      return finalUrl;
+
+    } catch (uploadError) {
+      console.error('❌ Erro no processo de upload:', uploadError);
+      throw uploadError;
+    }
+  };
+
+  // Função para fazer upload de imagem para o Supabase Storage
+  const uploadImageToStorage = async (imageFile: File): Promise<string> => {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substr(2, 9);
+    const extension = imageFile.name.split('.').pop() || 'jpg';
+    const fileName = `image_${timestamp}_${random}.${extension}`;
+    
+    console.log('📷 Iniciando upload de imagem:', {
+      fileName,
+      fileSize: imageFile.size,
+      fileType: imageFile.type,
+      timestamp: new Date(timestamp).toLocaleString('pt-BR')
+    });
+
+    try {
+      const { data, error } = await supabase.storage
+        .from('imageswpp')
+        .upload(fileName, imageFile, {
+          contentType: imageFile.type,
+          upsert: false,
+          cacheControl: '3600'
+        });
+
+      if (error) {
+        console.error('❌ Erro no upload:', error);
+        throw new Error(`Erro ao fazer upload da imagem: ${error.message}`);
+      }
+
+      console.log('✅ Upload realizado com sucesso:', data);
+
+      // Obter URL pública
+      const { data: urlData } = supabase.storage
+        .from('imageswpp')
+        .getPublicUrl(data.path);
+
+      const finalUrl = urlData.publicUrl;
+      console.log('🔗 URL pública gerada:', finalUrl);
+
+      return finalUrl;
+
+    } catch (uploadError) {
+      console.error('❌ Erro no processo de upload:', uploadError);
+      throw uploadError;
+    }
+  };
+
+  // Função para enviar mensagem de imagem
+  const handleSendImage = async (imageFile: File) => {
+    if (!selectedContact) {
+      toast.error('Nenhum contato selecionado');
+      return;
+    }
+
+    const contact = contacts.find(c => c.id === selectedContact);
+    if (!contact?.telefone_id) {
+      toast.error('Erro: telefone não encontrado');
+      return;
+    }
+
+    console.log('📷 Iniciando envio de imagem para:', contact.telefone_id);
+
+    // Toast de loading
+    const loadingToast = toast.loading(
+      <div className="flex items-center gap-2">
+        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+        <span>Enviando imagem...</span>
+      </div>
+    );
+
+    try {
+      // 1. Upload da imagem para o storage
+      console.log('📤 Fazendo upload para storage...');
+      const imageUrl = await uploadImageToStorage(imageFile);
+      console.log('✅ Upload concluído. URL:', imageUrl);
+
+      // 2. Enviar via Evolution API
+      console.log('📡 Enviando imagem via Evolution API...');
+      const evolutionResponse = await sendImageMessage(contact.telefone_id, imageUrl, '');
+      console.log('✅ Imagem enviada via Evolution API:', evolutionResponse);
+
+      // 3. NÃO salvamos no banco - o n8n fará isso quando receber o webhook
+      console.log('📝 Aguardando webhook do n8n para salvar no banco...');
+      
+      // Dismiss loading toast e mostrar sucesso
+      toast.dismiss(loadingToast);
+      toast.success(
+        <div className="flex items-center gap-2">
+          <span>📷</span>
+          <span>Imagem enviada com sucesso!</span>
+        </div>
+      );
+      
+      // Scroll para o fim da conversa quando a mensagem chegar via subscription
+      // Isso acontecerá automaticamente quando o n8n salvar no banco
+
+    } catch (error) {
+      console.error('❌ Erro completo ao enviar imagem:', error);
+      
+      toast.dismiss(loadingToast);
+      
+      const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+      toast.error(
+        <div className="flex items-center gap-2">
+          <span>❌</span>
+          <span>Erro ao enviar imagem: {errorMessage}</span>
+        </div>
+      );
+    }
+  };
+
+  // Função para enviar mensagem de áudio
+  const handleSendAudio = async (audioBlob: Blob) => {
+    if (!selectedContact) {
+      toast.error('Nenhum contato selecionado');
+      return;
+    }
+
+    const contact = contacts.find(c => c.id === selectedContact);
+    if (!contact?.telefone_id) {
+      toast.error('Erro: telefone não encontrado');
+      return;
+    }
+
+    console.log('🎤 Iniciando envio de áudio para:', contact.telefone_id);
+
+    // Toast de loading
+    const loadingToast = toast.loading(
+      <div className="flex items-center gap-2">
+        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+        <span>Enviando áudio...</span>
+      </div>
+    );
+
+    try {
+      // 1. Upload do áudio para o storage
+      console.log('📤 Fazendo upload para storage...');
+      const audioUrl = await uploadAudioToStorage(audioBlob);
+      console.log('✅ Upload concluído. URL:', audioUrl);
+
+      // 2. Enviar via Evolution API
+      console.log('📡 Enviando áudio via Evolution API...');
+      console.log('📋 Dados do envio:', {
+        telefone: contact.telefone_id,
+        audioUrl: audioUrl,
+        blobType: audioBlob.type,
+        blobSize: audioBlob.size
+      });
+      const evolutionResponse = await sendAudioMessage(contact.telefone_id, audioUrl, '');
+      console.log('✅ Áudio enviado via Evolution API:', evolutionResponse);
+
+      // 3. NÃO salvamos no banco - o n8n fará isso quando receber o webhook
+      console.log('📝 Aguardando webhook do n8n para salvar no banco...');
+      
+      // Dismiss loading toast e mostrar sucesso
+      toast.dismiss(loadingToast);
+      toast.success(
+        <div className="flex items-center gap-2">
+          <span>🎤</span>
+          <span>Áudio enviado com sucesso!</span>
+        </div>
+      );
+      
+      // Scroll para o fim da conversa quando a mensagem chegar via subscription
+      // Isso acontecerá automaticamente quando o n8n salvar no banco
+
+    } catch (error) {
+      console.error('❌ Erro completo ao enviar áudio:', error);
+      
+      // Dismiss loading toast
+      toast.dismiss(loadingToast);
+      
+      // Mostrar erro específico
+      const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+      
+      if (errorMessage.includes('row-level security') || errorMessage.includes('RLS')) {
+        toast.error(
+          <div className="max-w-md">
+            <div className="font-medium mb-2">🔒 Erro de Permissão no Storage</div>
+            <div className="text-sm opacity-90">
+              Execute o arquivo SOLUCAO-RAPIDA-RLS.sql no Supabase.
+            </div>
+          </div>,
+          { duration: 8000 }
+        );
+      } else {
+        toast.error(
+          <div className="flex items-center gap-2">
+            <span>❌</span>
+            <span>Erro ao enviar áudio: {errorMessage}</span>
+          </div>
+        );
+      }
+    }
+  };
+
+  // Funções para controlar a gravação de áudio
+  const startRecording = () => {
+    setIsRecording(true);
+    setShowAudioRecorder(true);
+  };
+
+  const stopRecording = () => {
+    setIsRecording(false);
+  };
+
+  const cancelRecording = () => {
+    setIsRecording(false);
+  };
+
+  // Função para renderizar o conteúdo da mensagem baseado no tipo
+  const renderMessageContent = (msg: Conversation) => {
+    const messageType = msg.tipo_mensagem || 'texto';
+    
+    // Todos os console.log deste arquivo devem ser comentados para ocultar logs sensíveis.
+    // console.log('🎨 Renderizando mensagem:', {
+    //   id: msg.id,
+    //   tipo: messageType,
+    //   url: msg.url_arquivo,
+    //   mensagem: msg.mensagem,
+    //   timestamp: msg.timestamp || msg.created_at
+    // });
+
+    switch (messageType) {
+      case 'audio':
+        if (msg.url_arquivo) {
+          // console.log('🎵 Renderizando player de áudio para URL:', msg.url_arquivo);
+          return <AudioPlayerRobust audioUrl={msg.url_arquivo} isOwn={msg.tipo} />;
+        }
+        // console.warn('⚠️ Mensagem de áudio sem URL:', msg);
+        return (
+          <div className="flex items-center gap-2 text-gray-500 italic">
+            <span>🎤</span>
+            <span>Áudio não disponível</span>
+          </div>
+        );
+
+      case 'imagem':
+        if (msg.url_arquivo) {
+          return (
+            <div className="max-w-sm">
+              <img 
+                src={msg.url_arquivo} 
+                alt="Imagem" 
+                className="rounded-lg max-w-full h-auto"
+                loading="lazy"
+              />
+              {msg.mensagem && msg.mensagem !== '📷 Imagem' && (
+                <p className="mt-2">{msg.mensagem}</p>
+              )}
+            </div>
+          );
+        }
+        return (
+          <div className="flex items-center gap-2 text-gray-500 italic">
+            <span>📷</span>
+            <span>Imagem não disponível</span>
+          </div>
+        );
+
+      case 'video':
+        if (msg.url_arquivo) {
+          return (
+            <div className="max-w-sm">
+              <video 
+                src={msg.url_arquivo} 
+                controls 
+                className="rounded-lg max-w-full h-auto"
+                preload="metadata"
+              />
+              {msg.mensagem && msg.mensagem !== '🎥 Vídeo' && (
+                <p className="mt-2">{msg.mensagem}</p>
+              )}
+            </div>
+          );
+        }
+        return (
+          <div className="flex items-center gap-2 text-gray-500 italic">
+            <span>🎥</span>
+            <span>Vídeo não disponível</span>
+          </div>
+        );
+
+      case 'texto':
+      default:
+        return <pre className="whitespace-pre-wrap break-words m-0 bg-transparent font-sans">{msg.mensagem}</pre>;
+    }
+  };
+
+  const handleSaleCompleted = async () => {
+    if (!selectedContact || !user?.id_cliente) return;
+    
+    try {
+      // Buscar o telefone_id do contato selecionado
+      const contact = contacts.find(c => c.id === selectedContact);
+      if (!contact?.telefone_id) {
+        toast.error('Erro: contato não encontrado');
+        return;
+      }
+      
+      // Remover o sufixo @s.whatsapp.net do número de telefone
+      const phoneNumber = contact.telefone_id.replace('@s.whatsapp.net', '');
+      
+      // Buscar o lead para obter o ID
+      const { data: leadData, error: fetchError } = await supabase
+        .from('leads')
+        .select('id')
+        .eq('telefone', phoneNumber)
+        .eq('id_cliente', user.id_cliente)
+        .single();
+      
+      if (fetchError || !leadData) {
+        console.error('Erro ao buscar lead:', fetchError);
+        toast.error('Erro ao registrar venda');
+        return;
+      }
+      
+      // Usar o novo método do leadsService para atualizar status de venda
+      const updatedLead = await leadsService.updateVendaStatus(leadData.id, user.id_cliente, true);
+      
+      if (!updatedLead) {
+        console.error('Erro ao atualizar status da venda');
+        toast.error('Erro ao registrar venda');
+        return;
+      }
+      
+      // Atualizar o estado local
+      setSelectedContactStage('Ganho');
+      
+      toast.success('Venda registrada com sucesso!');
+    } catch (error) {
+      console.error('Erro ao processar venda:', error);
+      toast.error('Erro ao registrar venda');
+    }
+  };
+
+  const handleEndConversation = async () => {
+    if (!selectedContact || !user?.id_cliente) return;
+    
+    try {
+      // Buscar o telefone_id do contato selecionado
+      const contact = contacts.find(c => c.id === selectedContact);
+      if (!contact?.telefone_id) {
+        toast.error('Erro: contato não encontrado');
+        return;
+      }
+      
+      // Remover o sufixo @s.whatsapp.net do número de telefone
+      const phoneNumber = contact.telefone_id.replace('@s.whatsapp.net', '');
+      
+      // Atualizar o lead existente
+      const { error } = await supabase
+        .from('leads')
+        .update({
+          status_conversa: 'Encerrada'
+        })
+        .eq('telefone', phoneNumber)
+        .eq('id_cliente', user.id_cliente);
+      
+      if (error) {
+        console.error('Erro ao encerrar conversa:', error);
+        toast.error('Erro ao encerrar conversa');
+        return;
+      }
+      
+      // Atualizar o estado local
+      setSelectedContactStage('Encerrada');
+      
+      // Atualizar o mapa de status local
+      const normalizedPhone = normalizePhone(phoneNumber);
+      setContactStatusMap(prev => ({
+        ...prev,
+        [normalizedPhone]: 'Encerrada'
+      }));
+      
+      // Recarregar os dados de todos os contatos para atualizar a interface
+      const phones = contacts.map(c => c.telefone_id);
+      await fetchAttendancesForContacts(phones);
+      
+      toast.success('Conversa encerrada com sucesso');
+      
+      // Se o filtro atual for "em_andamento", mudar para "encerrada" para continuar vendo a conversa
+      if (statusFilter === 'em_andamento') {
+        setStatusFilter('encerrada');
+      }
+    } catch (error) {
+      console.error('Erro ao processar encerramento:', error);
+      toast.error('Erro ao encerrar conversa');
+    }
+  };
+
+  // Adicione no início do componente Conversations:
+  const [availableChatbots, setAvailableChatbots] = useState<any[]>([]);
+  const [selectedChatbotId, setSelectedChatbotId] = useState<string | number | null>(null);
+
+  // Buscar chatbots ativos do usuário e atualizar os estados
+  useEffect(() => {
+    const fetchChatbots = async () => {
+      if (!user?.id) return;
+      const { data, error } = await supabase
+        .from('prompts_oficial')
+        .select('id, nome, em_uso')
+        .eq('id_usuario', user.id)
+        .eq('status', true);
+
+      if (!error && data) {
+        setAvailableChatbots(data);
+        const emUso = data.find((bot: any) => bot.em_uso === true);
+        setSelectedChatbotId(emUso ? emUso.id : null);
+      } else {
+        setAvailableChatbots([]);
+        setSelectedChatbotId(null);
+      }
+    };
+    fetchChatbots();
+  }, [user]);
+
+  // Adicionar estado para busca
+  const [search, setSearch] = useState("");
+
+  // Função para normalizar telefone removendo sufixo @s.whatsapp.net
+  function normalizePhoneOnlyNumber(phone: string): string {
+    return phone ? String(phone).replace('@s.whatsapp.net', '').replace(/\D/g, '') : '';
+  }
+
+  // Filtrar contatos para exibir apenas os leads do departamento selecionado E status da conversa
+  const leadsPhonesSet = new Set(leads.map(lead => normalizePhoneOnlyNumber(lead.telefone)));
+  const filteredContacts = contacts.filter(contact => {
+    const phone = contact.telefone_id || '';
+    if (!leadsPhonesSet.has(normalizePhoneOnlyNumber(phone))) return false;
+    const status = contactStatusMap[normalizePhoneOnlyNumber(phone)];
+    // Filtro de status
+    const statusMatch = statusFilter === 'em_andamento' 
+      ? (!status || status === 'Em andamento')
+      : status === 'Encerrada';
+    // Filtro de busca igual à página de contatos
+    const termo = search.trim().toLowerCase();
+    const nameMatch = contact.name.toLowerCase().includes(termo);
+    const phoneMatch = phone.includes(termo);
+    return statusMatch && (search === '' || nameMatch || phoneMatch);
+  });
+
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [departamentos, setDepartamentos] = useState<Departamento[]>([]);
+  const [selectedDepartamento, setSelectedDepartamento] = useState<string>('all');
+  const [selectedEtiqueta, setSelectedEtiqueta] = useState<string>('all');
+  const [transferring, setTransferring] = useState(false);
+
+  // Carregar departamentos ao abrir o modal
+  const handleOpenTransferModal = async () => {
+    if (!user?.id) return;
+    try {
+      const clienteInfo = await clientesService.getClienteByUserId(user.id);
+      if (clienteInfo?.id) {
+        const deps = await departamentosService.listar(clienteInfo.id);
+        setDepartamentos(deps);
+        setShowTransferModal(true);
+      }
+    } catch (error) {
+      toast.error("Erro ao carregar departamentos");
+    }
+  };
+
+  const fetchDepartamentos = async () => {
+    if (!user?.id) return;
+    try {
+      const clienteInfo = await clientesService.getClienteByUserId(user.id);
+      if (clienteInfo?.id) {
+        const deps = await departamentosService.listar(clienteInfo.id);
+        setDepartamentos(deps);
+        console.log('Departamentos carregados:', deps);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar departamentos', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchDepartamentos();
+  }, [user]);
+
+  // Transferir lead para outro departamento
+  const handleTransferDepartamento = async () => {
+    if (!selectedLeadId || !selectedDepartamento) return;
+
+    try {
+      await supabase
+        .from('leads')
+        .update({ id_departamento: Number(selectedDepartamento) })
+        .eq('id', Number(selectedLeadId));
+      toast.success("Lead transferido com sucesso!");
+      setShowTransferModal(false);
+      setSelectedDepartamento(null);
+      setSelectedLeadId(null);
+      fetchLeads();
+      fetchDepartamentos();
+    } catch (error) {
+      console.error('Erro ao transferir lead:', error);
+      toast.error("Erro ao transferir lead");
+    }
+  };
+
+  // Buscar leads filtrando por departamento
+  const fetchLeads = async () => {
+    if (!user?.id_cliente) return;
+    setLoadingLeads(true);
+    console.log('Buscando leads:', { id_cliente: user.id_cliente, selectedDepartamento });
+    const leadsFiltrados = await leadsService.getLeadsByClientIdAndDepartamento(
+      user.id_cliente,
+      selectedDepartamento === 'all' ? null : Number(selectedDepartamento)
+    );
+    console.log('Leads retornados:', leadsFiltrados);
+    
+    // Log para debugar scores de qualificação
+    const leadsComScore = leadsFiltrados.filter(lead => lead.score_qualificacao && typeof lead.score_qualificacao === 'number');
+    console.log('Leads com score de qualificação:', leadsComScore.length, 'de', leadsFiltrados.length);
+    if (leadsComScore.length > 0) {
+      console.log('Exemplos de scores:', leadsComScore.slice(0, 3).map(l => ({ 
+        nome: l.nome, 
+        telefone: l.telefone, 
+        score: l.score_qualificacao 
+      })));
+    }
+    
+    setLeads(leadsFiltrados);
+    setLoadingLeads(false);
+  };
+
+  useEffect(() => {
+    fetchLeads();
+  }, [user?.id_cliente, selectedDepartamento]);
+
+  // Adicionar função utilitária no início do componente Conversations:
+  function getDepartamentoNome(id: string | number | null | undefined) {
+    if (!id) return null;
+    // Log para depuração
+    console.log('DEBUG getDepartamentoNome | id:', id, '| departamentos:', departamentos);
+    const dep = departamentos.find(d => String(d.id) === String(id));
+    return dep ? dep.nome : null;
+  }
+
+  // Função para inserir o lead no followup programado
+  const handleInserirNoFollowupProgramado = async () => {
+    if (!selectedContact || !user?.id_cliente) {
+      toast.error('Erro: informações do contato ou cliente ausentes');
+      return;
+    }
+    const contact = contacts.find(c => c.id === selectedContact);
+    if (!contact?.telefone_id) {
+      toast.error('Erro: telefone do contato não encontrado');
+      return;
+    }
+    // Buscar o lead correspondente
+    const lead = leads.find(l => normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact.telefone_id));
+    if (!lead) {
+      toast.error('Lead não encontrado');
+      return;
+    }
+    // Buscar configuração de followup do cliente
+    const config = await followupService.getByClientId(user.id_cliente);
+    if (!config) {
+      toast.error('Configuração de followup não encontrada para este cliente');
+      return;
+    }
+    // Calcular datas dos follow-ups
+    const hoje = new Date();
+    let primeiroData = null, segundoData = null, terceiroData = null;
+    if (config.primeiro_followup_status) {
+      primeiroData = addDays(hoje, config.primeiro_followup_dias);
+    }
+    if (config.segundo_followup_status && primeiroData) {
+      segundoData = addDays(primeiroData, config.segundo_followup_dias);
+    }
+    if (config.terceiro_followup_status && segundoData) {
+      terceiroData = addDays(segundoData, config.terceiro_followup_dias);
+    }
+
+    // Atualizar o lead
+    const { error } = await supabase
+      .from('leads')
+      .update({
+        followup_programado: true,
+        id_followup: config.id,
+        primeiro_followup_data: primeiroData ? format(primeiroData, 'yyyy-MM-dd') : null,
+        primeiro_followup_hora: config.horario_followup,
+        primeiro_followup_mensagem: config.primeiro_followup_mensagem,
+        segundo_followup_data: segundoData ? format(segundoData, 'yyyy-MM-dd') : null,
+        segundo_followup_hora: config.horario_followup,
+        segundo_followup_mensagem: config.segundo_followup_mensagem,
+        terceiro_followup_data: terceiroData ? format(terceiroData, 'yyyy-MM-dd') : null,
+        terceiro_followup_hora: config.horario_followup,
+        terceiro_followup_mensagem: config.terceiro_followup_mensagem
+      })
+      .eq('id', lead.id);
+    if (error) {
+      toast.error('Erro ao inserir no followup programado');
+      return;
+    }
+    toast.success('Lead inserido no followup programado!');
+    fetchLeads();
+  };
+
+  // Função para alternar o chip do contato
+  const handleAlternarChip = async () => {
+    if (!selectedContact || !user?.id_cliente) {
+      toast.error('Erro: informações do contato ou cliente ausentes');
+      return;
+    }
+
+    const contact = contacts.find(c => c.id === selectedContact);
+    if (!contact?.telefone_id) {
+      toast.error('Erro: telefone do contato não encontrado');
+      return;
+    }
+
+    // Buscar o lead correspondente
+    const lead = leads.find(l => normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact.telefone_id));
+    if (!lead) {
+      toast.error('Lead não encontrado');
+      return;
+    }
+
+    // Verificar se o cliente tem duas instâncias configuradas
+    if (!clienteInfo?.instance_id || !clienteInfo?.instance_id_2) {
+      toast.error('Cliente não possui duas instâncias configuradas');
+      return;
+    }
+
+    // Determinar qual é o chip atual e qual será o destino
+    const chipAtual = lead.instance_id;
+    const chipDestino = chipAtual === clienteInfo.instance_id ? clienteInfo.instance_id_2 : clienteInfo.instance_id;
+    const nomeChipAtual = chipAtual === clienteInfo.instance_id ? clienteInfo.instance_name : clienteInfo.instance_name_2;
+    const nomeChipDestino = chipDestino === clienteInfo.instance_id ? clienteInfo.instance_name : clienteInfo.instance_name_2;
+
+    // Verificar se já existe um lead para este telefone no chip de destino
+    const leadExistente = leads.find(l => 
+      normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact.telefone_id) &&
+      l.instance_id === chipDestino
+    );
+
+    if (leadExistente) {
+      toast.error(`Este contato já existe no ${nomeChipDestino}`);
+      return;
+    }
+
+    // Pedir confirmação do usuário
+    const confirmacao = window.confirm(
+      `Deseja realmente duplicar este contato no ${nomeChipDestino}?\n\n` +
+      `Esta ação irá criar uma nova entrada para este contato no outro chip, ` +
+      `iniciando uma nova conversa. O histórico atual permanecerá no ${nomeChipAtual}.`
+    );
+
+    if (!confirmacao) {
+      return;
+    }
+
+    try {
+      // Toast de loading
+      const loadingToast = toast.loading(
+        <div className="flex items-center gap-2">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+          <span>Duplicando contato no outro chip...</span>
+        </div>
+      );
+
+      // Criar uma nova entrada no lead para o chip de destino (apenas campos compatíveis)
+      // Extrair apenas o número puro do telefone_id
+      const telefonePuro = (contact.telefone_id || '').split('@')[0];
+      const { data: novoLead, error: leadError } = await supabase
+        .from('leads')
+        .insert({
+          telefone: telefonePuro,
+          nome: lead.nome || contact.name,
+          id_cliente: user.id_cliente,
+          status_conversa: 'Em andamento',
+          status: lead.status || 'Leads',
+          atendimento_humano: lead.atendimento_humano || false,
+          atendimento_ia: lead.atendimento_ia || false,
+          instance_id: chipDestino,
+          nome_instancia: nomeChipDestino,
+          id_departamento: lead.id_departamento,
+          created_at: new Date().toISOString(),
+          data_criacao: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (leadError) {
+        console.error('Erro ao criar lead no novo chip:', leadError);
+        toast.dismiss(loadingToast);
+        toast.error('Erro ao duplicar contato no outro chip');
+        return;
+      }
+
+      // Fechar toast de loading e mostrar sucesso
+      toast.dismiss(loadingToast);
+      toast.success(
+        `Contato duplicado com sucesso no ${nomeChipDestino}!\n` +
+        `Agora você pode conversar com este contato em ambos os chips.`
+      );
+      
+      // Selecionar automaticamente o novo contato para abrir o chat
+      setSelectedContact(telefonePuro);
+      
+      // Forçar inclusão do novo contato na lista de contatos do chip de destino
+      setContacts(prevContacts => {
+        // Verifica se já existe
+        if (prevContacts.some(c => c.id === telefonePuro && c.instance_id === chipDestino)) {
+          return prevContacts;
+        }
+        // Adiciona o novo contato manualmente
+        return [
+          {
+            id: telefonePuro,
+            name: novoLead?.nome || lead.nome || contact.name || `Contato ${telefonePuro.slice(-4)}`,
+            lastMessage: '',
+            lastMessageTime: novoLead?.data_criacao || novoLead?.created_at || new Date().toISOString(),
+            avatar: '/avatar.png',
+            telefone_id: telefonePuro,
+            atendimento_ia: novoLead?.atendimento_ia || false,
+            atendimento_humano: novoLead?.atendimento_humano || false,
+            lastMessageType: 'texto',
+            instance_id: chipDestino,
+          },
+          ...prevContacts
+        ];
+      });
+      
+      // Recarregar os dados
+      await fetchLeads();
+      await fetchConversations();
+      
+    } catch (error) {
+      console.error('Erro ao duplicar contato:', error);
+      toast.error('Erro ao duplicar contato no outro chip');
+    }
+  };
+
+  // Handler para envio de vídeo
+  const handleSendVideo = async (videoFile: File) => {
+    if (!selectedContact) {
+      toast.error('Nenhum contato selecionado');
+      return;
+    }
+
+    const contact = contacts.find(c => c.id === selectedContact);
+    if (!contact?.telefone_id) {
+      toast.error('Erro: telefone não encontrado');
+      return;
+    }
+
+    // Toast de loading
+    const loadingToast = toast.loading(
+      <div className="flex items-center gap-2">
+        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+        <span>Enviando vídeo...</span>
+      </div>
+    );
+
+    try {
+      // Upload do vídeo para o storage
+      const videoUrl = await uploadImageToStorage(videoFile);
+      
+      // Enviar via Evolution API
+      await sendVideoMessage(contact.telefone_id, videoUrl);
+      
+      // Dismiss loading toast e mostrar sucesso
+      toast.dismiss(loadingToast);
+      toast.success(
+        <div className="flex items-center gap-2">
+          <span>🎥</span>
+          <span>Vídeo enviado com sucesso!</span>
+        </div>
+      );
+
+      // Fechar o uploader
+      setShowVideoUploader(false);
+      
+    } catch (error) {
+      console.error('❌ Erro ao enviar vídeo:', error);
+      
+      toast.dismiss(loadingToast);
+      
+      const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+      toast.error(
+        <div className="flex items-center gap-2">
+          <span>❌</span>
+          <span>Erro ao enviar vídeo: {errorMessage}</span>
+        </div>
+      );
+    }
+  };
+
+  // 1. Estado para mensagens não lidas
+  const [unreadMap, setUnreadMap] = useState<Record<string, boolean>>(() => {
+    const saved = localStorage.getItem('smartcrm-unread-map');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {}
+    }
+    return {};
+  });
+
+  // 2. Detectar novas mensagens e marcar como não lida
+  useEffect(() => {
+    if (!conversations.length) return;
+    setUnreadMap(prev => {
+      const updated = { ...prev };
+      conversations.forEach(msg => {
+        const phone = normalizePhoneOnlyNumber(msg.telefone_id);
+        // Se a mensagem não é do contato aberto e é recebida (tipo === false)
+        if (selectedContact !== phone && msg.tipo === false) {
+          updated[phone] = true;
+        }
+      });
+      return updated;
+    });
+  }, [conversations]);
+
+  // 3. Limpar badge ao abrir conversa
+  useEffect(() => {
+    if (selectedContact) {
+      setUnreadMap(prev => {
+        const updated = { ...prev };
+        updated[normalizePhoneOnlyNumber(selectedContact)] = false;
+        return updated;
+      });
+    }
+  }, [selectedContact]);
+
+  // 4. Badge visual na lista de contatos
+  // (Adicionar dentro do map de contatos, ao lado do nome)
+  // <span className="ml-1 w-2 h-2 bg-blue-500 rounded-full inline-block" title="Nova mensagem" />
+
+  // 5. Notificação na aba do navegador
+  useEffect(() => {
+    const unreadCount = Object.values(unreadMap).filter(Boolean).length;
+    if (unreadCount > 0) {
+      document.title = `(${unreadCount}) SmartCRM`;
+    } else {
+      document.title = 'SmartCRM';
+    }
+  }, [unreadMap]);
+
+  // 2. Salvar unreadMap no localStorage sempre que mudar
+  useEffect(() => {
+    localStorage.setItem('smartcrm-unread-map', JSON.stringify(unreadMap));
+  }, [unreadMap]);
+
+  // 1. Controle robusto: mapa de última leitura por contato
+  const [lastReadMap, setLastReadMap] = useState<Record<string, number>>(() => {
+    const saved = localStorage.getItem('smartcrm-lastread-map');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {}
+    }
+    return {};
+  });
+
+  // 2. Persistir lastReadMap no localStorage
+  useEffect(() => {
+    localStorage.setItem('smartcrm-lastread-map', JSON.stringify(lastReadMap));
+  }, [lastReadMap]);
+
+  // 3. Ao abrir uma conversa, salvar o timestamp da última mensagem lida
+  useEffect(() => {
+    if (selectedContact) {
+      const phone = normalizePhoneOnlyNumber(selectedContact);
+      // Pega a última mensagem desse contato
+      const msgs = conversations.filter(msg => normalizePhoneOnlyNumber(msg.telefone_id) === phone);
+      if (msgs.length > 0) {
+        const lastMsg = msgs[msgs.length - 1];
+        const lastTimestamp = new Date(lastMsg.timestamp || lastMsg.created_at).getTime();
+        setLastReadMap(prev => ({ ...prev, [phone]: lastTimestamp }));
+      }
+    }
+  }, [selectedContact, conversations]);
+
+  // 4. Função para saber se há mensagem não lida
+  function hasUnread(contact: Contact) {
+    const phone = normalizePhoneOnlyNumber(contact.telefone_id);
+    const lastRead = lastReadMap[phone] || 0;
+    const msgs = conversations.filter(msg => normalizePhoneOnlyNumber(msg.telefone_id) === phone);
+    if (msgs.length === 0) return false;
+    const lastMsg = msgs[msgs.length - 1];
+    const lastTimestamp = new Date(lastMsg.timestamp || lastMsg.created_at).getTime();
+    // Só mostra badge se houver mensagem mais recente do que o último lido e não for a conversa aberta
+    return lastTimestamp > lastRead && selectedContact !== contact.id;
+  }
+
+  // Efeito para atualizar o título da aba com o número de não lidas
+  useEffect(() => {
+    // A funcionalidade de contagem no título foi removida a pedido do usuário.
+    // Mantemos o título padrão.
+    document.title = 'SmartCRM';
+  }, [lastReadMap]); // Dependência mantida para consistência, sem efeito colateral.
+
+  // Salvar timestamps no localStorage sempre que forem atualizados
+  useEffect(() => {
+    localStorage.setItem('lastReadTimestamps', JSON.stringify(lastReadMap));
+  }, [lastReadMap]);
+
+  // Adicione no início do componente Conversations:
+  const [mobileView, setMobileView] = useState<'list' | 'chat'>('list');
+
+  // Atualize o efeito de seleção de contato:
+  useEffect(() => {
+    if (window.innerWidth < 768) {
+      setMobileView(selectedContact ? 'chat' : 'list');
+    }
+  }, [selectedContact]);
+
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Atualização em tempo real: escutar mudanças na tabela leads e atualizar conversas
+  useEffect(() => {
+    if (!user?.id_cliente) {
+      console.log('Realtime leads: id_cliente não disponível');
+      return;
+    }
+    
+    console.log('Realtime leads: Criando subscription para id_cliente:', user.id_cliente);
+    
+    // Cria canal realtime para a tabela leads
+    const leadsChannel = supabase
+      .channel(`realtime-leads-conversations-${user.id_cliente}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // INSERT e UPDATE
+          schema: 'public',
+          table: 'leads',
+          filter: `id_cliente=eq.${user.id_cliente}`
+        },
+        (payload) => {
+          console.log('Realtime leads: Mudança detectada:', payload);
+          // Sempre que houver mudança em leads, buscar conversas novamente
+          fetchConversations();
+        }
+      )
+      .subscribe((status) => {
+        console.log('Realtime leads: Status da subscription:', status);
+      });
+    
+    // Cleanup
+    return () => {
+      console.log('Realtime leads: Removendo subscription');
+      supabase.removeChannel(leadsChannel);
+    };
+  }, [user?.id_cliente, fetchConversations]);
+
+  // Polling automático para atualizar conversas a cada 5 segundos
+  useEffect(() => {
+    if (!user?.id_cliente) return;
+    const interval = setInterval(() => {
+      fetchConversations(false); // Não mostra loading no polling
+    }, 5000); // 5 segundos
+    return () => clearInterval(interval);
+  }, [user?.id_cliente, fetchConversations]);
+
+  // Scroll automático para a última mensagem ao abrir/trocar conversa ou receber novas mensagens
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      // Verificar se o usuário está próximo do final da conversa
+      const messagesContainer = messagesEndRef.current.parentElement;
+      if (messagesContainer) {
+        const { scrollTop, scrollHeight, clientHeight } = messagesContainer;
+        const isNearBottom = scrollHeight - scrollTop - clientHeight < 100; // 100px de tolerância
+        
+        // Só faz scroll automático se estiver próximo do final, se for uma nova conversa, ou se há novas mensagens
+        if (isNearBottom || !selectedContact || hasNewMessages) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'auto' });
+          // Limpar o estado de novas mensagens após fazer scroll
+          if (hasNewMessages) {
+            setHasNewMessages(false);
+          }
+        }
+      }
+    }
+  }, [conversations, selectedContact, hasNewMessages]);
+
+  // Filtro de chip
+  const [chipSelecionado, setChipSelecionado] = useState<'chip1' | 'chip2'>('chip1');
+  const instanceIdAtivo = chipSelecionado === 'chip1' ? instanceId1 : instanceId2;
+  // Filtro de chip
+  const contatosFiltrados = contacts.filter(c => c.instance_id === instanceIdAtivo);
+
+  const instanceNameAtivo = chipSelecionado === 'chip1' ? instanceName1 : instanceName2;
+
+  // Filtro de chip, departamento, etiqueta, status e busca juntos
+  const contatosExibidos = contacts.filter(c => {
+    // 1. Filtro por Chip (primeira prioridade)
+    if (c.instance_id !== instanceIdAtivo) return false;
+    
+    // 2. Filtro por Departamento (segunda prioridade)
+    if (selectedDepartamento !== 'all') {
+      const lead = leads.find(l =>
+        String(l.instance_id) === String(c.instance_id) &&
+        normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(c.telefone_id)
+      ) || leads.find(l => normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(c.telefone_id));
+      
+      if (!lead || String(lead.id_departamento) !== selectedDepartamento) return false;
+    }
+    
+    // 3. Filtro por Etiqueta (terceira prioridade)
+    if (selectedEtiqueta !== 'all') {
+      const lead = leads.find(l =>
+        String(l.instance_id) === String(c.instance_id) &&
+        normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(c.telefone_id)
+      ) || leads.find(l => normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(c.telefone_id));
+      
+      if (!lead || !lead.id_etiquetas) return false;
+      
+      const etiquetasDoLead = lead.id_etiquetas.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+      if (!etiquetasDoLead.includes(parseInt(selectedEtiqueta))) return false;
+    }
+    
+    // 4. Filtro por Status (quarta prioridade)
+    const statusMatch = statusFilter === 'em_andamento'
+      ? (!contactStatusMap[normalizePhoneOnlyNumber(c.telefone_id)] || contactStatusMap[normalizePhoneOnlyNumber(c.telefone_id)] === 'Em andamento')
+      : contactStatusMap[normalizePhoneOnlyNumber(c.telefone_id)] === 'Encerrada';
+    
+    if (!statusMatch) return false;
+    
+    // 5. Filtro por Busca (última prioridade)
+    if (search.trim() !== '') {
+      const searchMatch = c.name.toLowerCase().includes(search.trim().toLowerCase()) ||
+        (c.telefone_id && c.telefone_id.includes(search.trim()));
+      if (!searchMatch) return false;
+    }
+    
+    return true;
+  });
+  // Remover contatosFiltrados e use apenas contatosExibidos na renderização
+
+  // Estados para gerenciamento de etiquetas
+  const [etiquetas, setEtiquetas] = useState<Etiqueta[]>([]);
+  const [loadingEtiquetas, setLoadingEtiquetas] = useState(false);
+  const [contextMenuContact, setContextMenuContact] = useState<Contact | null>(null);
+  const [contextMenuLead, setContextMenuLead] = useState<Lead | null>(null);
+
+  // Buscar etiquetas do cliente
+  useEffect(() => {
+    const fetchEtiquetas = async () => {
+      if (!user?.id_cliente) return;
+      
+      setLoadingEtiquetas(true);
+      try {
+        const etiquetasData = await etiquetasService.listByCliente(user.id_cliente);
+        setEtiquetas(etiquetasData);
+      } catch (error) {
+        console.error('Erro ao buscar etiquetas:', error);
+        toast.error('Erro ao carregar etiquetas');
+      } finally {
+        setLoadingEtiquetas(false);
+      }
+    };
+
+    fetchEtiquetas();
+  }, [user?.id_cliente]);
+
+  // Funções para gerenciar etiquetas
+  const handleAddEtiqueta = async (etiquetaId: number) => {
+    if (!contextMenuLead || !user?.id_cliente) return;
+
+    try {
+      // Obter etiquetas atuais do lead
+      const etiquetasAtuais = contextMenuLead.id_etiquetas 
+        ? contextMenuLead.id_etiquetas.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id))
+        : [];
+
+      // Verificar se a etiqueta já está atribuída
+      if (etiquetasAtuais.includes(etiquetaId)) {
+        toast.info('Esta etiqueta já está atribuída ao contato');
+        return;
+      }
+
+      // Verificar limite de 3 etiquetas
+      if (etiquetasAtuais.length >= 3) {
+        toast.error('Limite máximo de 3 etiquetas atingido');
+        return;
+      }
+
+      // Adicionar nova etiqueta
+      const novasEtiquetas = [...etiquetasAtuais, etiquetaId];
+      const novasEtiquetasString = novasEtiquetas.join(',');
+
+      // Atualizar o lead no banco
+      const { error } = await supabase
+        .from('leads')
+        .update({ id_etiquetas: novasEtiquetasString })
+        .eq('id', contextMenuLead.id);
+
+      if (error) {
+        throw error;
+      }
+
+      // Atualizar o estado local
+      setLeads(prevLeads => 
+        prevLeads.map(lead => 
+          lead.id === contextMenuLead.id 
+            ? { ...lead, id_etiquetas: novasEtiquetasString }
+            : lead
+        )
+      );
+
+      const etiqueta = etiquetas.find(e => e.id === etiquetaId);
+      toast.success(`Etiqueta "${etiqueta?.nome}" adicionada com sucesso!`);
+    } catch (error) {
+      console.error('Erro ao adicionar etiqueta:', error);
+      toast.error('Erro ao adicionar etiqueta');
+    }
+  };
+
+  const handleRemoveEtiqueta = async (etiquetaId: number) => {
+    if (!contextMenuLead || !user?.id_cliente) return;
+
+    try {
+      // Obter etiquetas atuais do lead
+      const etiquetasAtuais = contextMenuLead.id_etiquetas 
+        ? contextMenuLead.id_etiquetas.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id))
+        : [];
+
+      // Remover a etiqueta
+      const novasEtiquetas = etiquetasAtuais.filter(id => id !== etiquetaId);
+      const novasEtiquetasString = novasEtiquetas.join(',');
+
+      // Atualizar o lead no banco
+      const { error } = await supabase
+        .from('leads')
+        .update({ id_etiquetas: novasEtiquetasString })
+        .eq('id', contextMenuLead.id);
+
+      if (error) {
+        throw error;
+      }
+
+      // Atualizar o estado local
+      setLeads(prevLeads => 
+        prevLeads.map(lead => 
+          lead.id === contextMenuLead.id 
+            ? { ...lead, id_etiquetas: novasEtiquetasString }
+            : lead
+        )
+      );
+
+      const etiqueta = etiquetas.find(e => e.id === etiquetaId);
+      toast.success(`Etiqueta "${etiqueta?.nome}" removida com sucesso!`);
+    } catch (error) {
+      console.error('Erro ao remover etiqueta:', error);
+      toast.error('Erro ao remover etiqueta');
+    }
+  };
+
+  const handleContextMenuOpen = (contact: Contact) => {
+    setContextMenuContact(contact);
+    
+    // Buscar o lead correspondente ao contato
+    const lead = leads.find(l =>
+      String(l.instance_id) === String(contact.instance_id) &&
+      normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact.telefone_id)
+    ) || leads.find(l => normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact.telefone_id));
+    
+    setContextMenuLead(lead || null);
+  };
+
+  const handleContextMenuClose = () => {
+    setContextMenuContact(null);
+    setContextMenuLead(null);
+  };
+
+  // Função para limpar todos os filtros
+  const clearAllFilters = () => {
+    setSelectedDepartamento('all');
+    setSelectedEtiqueta('all');
+    setStatusFilter('em_andamento');
+    setSearch('');
+  };
+
+  // Função para verificar se há filtros ativos
+  const hasActiveFilters = () => {
+    return selectedDepartamento !== 'all' || 
+           selectedEtiqueta !== 'all' || 
+           statusFilter !== 'em_andamento' || 
+           search.trim() !== '';
+  };
+
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+
+  // Função utilitária para normalizar telefone removendo sufixo
+  function normalizePhoneKey(phone: string) {
+    return String(phone).replace(/@s\.whatsapp\.net$/, '').replace(/\D/g, '');
+  }
+
+  // Buscar quantidade de mensagens não lidas por conversa
+  useEffect(() => {
+    const fetchUnreadCounts = async () => {
+      if (!user?.id_cliente) return;
+      const { data, error } = await supabase
+        .from('agente_conversacional_whatsapp')
+        .select('instance_id, telefone_id, foi_lida')
+        .eq('id_cliente', user.id_cliente)
+        .eq('foi_lida', false);
+      if (error) return;
+      const counts: Record<string, number> = {};
+      (data || []).forEach(msg => {
+        const key = `${msg.instance_id || ''}_${normalizePhoneKey(msg.telefone_id || '')}`;
+        counts[key] = (counts[key] || 0) + 1;
+      });
+      setUnreadCounts(counts);
+    };
+    fetchUnreadCounts();
+  }, [user?.id_cliente, conversations]);
+
+  // Marcar como lidas ao abrir a conversa
+  const handleContactChangeAndMarkRead = async (contactId: string) => {
+    handleContactChange(contactId);
+    const contact = contacts.find(c => c.id === contactId);
+    if (!contact) return;
+    await supabase
+      .from('agente_conversacional_whatsapp')
+      .update({ foi_lida: true })
+      .eq('id_cliente', user.id_cliente)
+      .eq('instance_id', contact.instance_id)
+      .eq('foi_lida', false)
+      .filter('telefone_id', 'ilike', `%${normalizePhoneKey(contact.telefone_id)}%`);
+    setUnreadCounts(prev => ({ ...prev, [`${contact.instance_id || ''}_${normalizePhoneKey(contact.telefone_id || '')}`]: 0 }));
+  };
+
+  return (
+    <>
+      {/* Drawer/Menu lateral para mobile */}
+      {menuOpen && (
+        <div className="fixed inset-0 z-50 flex">
+          {/* Fundo escuro para fechar o menu */}
+          <div className="fixed inset-0 bg-black bg-opacity-30" onClick={() => setMenuOpen(false)} />
+          {/* Menu lateral */}
+          <div className="relative w-64 max-w-full h-full bg-white shadow-lg flex flex-col p-6 animate-slide-in-left">
+            <button className="self-end mb-4 p-2 rounded hover:bg-gray-100" onClick={() => setMenuOpen(false)} aria-label="Fechar menu">
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <nav className="flex flex-col gap-4">
+              <Link to="/" className="text-lg font-medium text-gray-700 hover:text-primary-600" onClick={() => setMenuOpen(false)}>Dashboard</Link>
+              <Link to="/conversations" className="text-lg font-medium text-gray-700 hover:text-primary-600" onClick={() => setMenuOpen(false)}>Conversas</Link>
+              <Link to="/contatos" className="text-lg font-medium text-gray-700 hover:text-primary-600" onClick={() => setMenuOpen(false)}>Contatos</Link>
+              <Link to="/chatbots" className="text-lg font-medium text-gray-700 hover:text-primary-600" onClick={() => setMenuOpen(false)}>Chatbots</Link>
+              <Link to="/departamentos" className="text-lg font-medium text-gray-700 hover:text-primary-600" onClick={() => setMenuOpen(false)}>Departamentos</Link>
+              <Link to="/followup" className="text-lg font-medium text-gray-700 hover:text-primary-600" onClick={() => setMenuOpen(false)}>Followup Automático</Link>
+              <Link to="/settings" className="text-lg font-medium text-gray-700 hover:text-primary-600" onClick={() => setMenuOpen(false)}>Configurações</Link>
+            </nav>
+          </div>
+        </div>
+      )}
+      {/* Topo com botão de menu (apenas mobile) */}
+      <div className="flex items-center gap-2 p-4 border-b bg-white md:hidden sticky top-0 z-40">
+        <button
+          className="p-2 rounded hover:bg-gray-100"
+          onClick={() => setMenuOpen(true)}
+          aria-label="Abrir menu"
+        >
+          <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        <span className="font-bold text-xl text-primary-700">SmartCRM</span>
+        <div className="flex items-center gap-2">
+          <span className="text-2xl font-semibold">Conversas</span>
+          {hasActiveFilters() && (
+            <Badge variant="secondary" className="text-xs">
+              {contatosExibidos.length} de {contacts.filter(c => c.instance_id === instanceIdAtivo).length}
+            </Badge>
+          )}
+        </div>
+      </div>
+      <div className="flex h-screen overflow-hidden max-w-full">
+        {/* Mobile: mostrar só a lista ou só o chat */}
+        {/* Desktop: mostrar ambos lado a lado */}
+        {/* Lista de contatos */}
+        <div className={`w-full md:w-1/3 border-r flex flex-col ${mobileView === 'chat' ? 'hidden' : ''} md:flex`}>
+        <div className="p-4 border-b">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500" />
+            <Input 
+              className="pl-10"
+              placeholder="Buscar contatos por nome ou número..."
+              type="search"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+            {/* Select de Departamentos */}
+            <div className="mt-3">
+              <Select
+                value={selectedDepartamento || ''}
+                onValueChange={setSelectedDepartamento}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Filtrar por departamento" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os departamentos</SelectItem>
+                  {departamentos.map((dep) => (
+                    <SelectItem key={dep.id} value={dep.id.toString()}>
+                      {dep.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+          </div>
+          
+          {/* Select de Etiquetas */}
+          <div className="mt-3">
+            <Select
+              value={selectedEtiqueta || ''}
+              onValueChange={setSelectedEtiqueta}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Filtrar por etiqueta" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas as etiquetas</SelectItem>
+                {etiquetas.map((etiqueta) => (
+                  <SelectItem key={etiqueta.id} value={etiqueta.id.toString()}>
+                    <div className="flex items-center gap-2">
+                      <div 
+                        className="w-3 h-3 rounded-full border border-gray-300"
+                        style={{ backgroundColor: etiqueta.cor }}
+                      />
+                      {etiqueta.nome}
+                    </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+          </div>
+          <div className="flex gap-2 mt-3">
+            <Button
+              variant={statusFilter === 'em_andamento' ? 'default' : 'outline'}
+              size="sm"
+              className="flex-1"
+              onClick={() => setStatusFilter('em_andamento')}
+            >
+              <MessageSquare className="h-4 w-4 mr-2" />
+              Em andamento
+            </Button>
+            <Button
+              variant={statusFilter === 'encerrada' ? 'default' : 'outline'}
+              size="sm"
+              className="flex-1"
+              onClick={() => setStatusFilter('encerrada')}
+            >
+              <Archive className="h-4 w-4 mr-2" />
+              Encerradas
+            </Button>
+          </div>
+            
+            {/* Botão para limpar filtros */}
+            {hasActiveFilters() && (
+              <div className="mt-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={clearAllFilters}
+                >
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Limpar filtros
+                </Button>
+              </div>
+            )}
+          <Button
+            className="w-full mt-4 bg-primary-600 hover:bg-primary-700 text-white font-semibold"
+            onClick={() => {
+              if (clienteInfo && clienteInfo.instance_id && clienteInfo.instance_name) {
+                setShowNewConversationModal(true);
+              } else {
+                setShowInstanceWarning(true);
+              }
+            }}
+            disabled={!clienteInfo || !clienteInfo.instance_id || !clienteInfo.instance_name}
+          >
+            + Nova Conversa
+          </Button>
+          
+          {/* Seletor de chip */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <button onClick={() => setChipSelecionado('chip1')} disabled={chipSelecionado === 'chip1'} style={{ padding: 6, borderRadius: 4, background: chipSelecionado === 'chip1' ? '#a78bfa' : '#f3f4f6', color: chipSelecionado === 'chip1' ? '#fff' : '#333', border: 'none', cursor: 'pointer' }}>Chip 1</button>
+            <button onClick={() => setChipSelecionado('chip2')} disabled={chipSelecionado === 'chip2'} style={{ padding: 6, borderRadius: 4, background: chipSelecionado === 'chip2' ? '#a78bfa' : '#f3f4f6', color: chipSelecionado === 'chip2' ? '#fff' : '#333', border: 'none', cursor: 'pointer' }}>Chip 2</button>
+          </div>
+        </div>
+        {/* Modal de Nova Conversa */}
+        <Dialog open={showNewConversationModal} onOpenChange={setShowNewConversationModal}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Nova Conversa</DialogTitle>
+            </DialogHeader>
+            <RadioGroup
+              value={newConversationMode}
+              onValueChange={value => setNewConversationMode(value as 'existente' | 'novo')}
+              className="flex flex-row gap-6 mb-4"
+            >
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="existente" id="contato-existente" />
+                <label htmlFor="contato-existente">Contato existente</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="novo" id="novo-contato" />
+                <label htmlFor="novo-contato">Novo contato</label>
+              </div>
+            </RadioGroup>
+            {newConversationMode === 'existente' ? (
+              <div className="mb-4">
+                {loadingLeads ? (
+                  <p>Carregando contatos...</p>
+                ) : (
+                  <Select
+                    value={selectedLeadId || ''}
+                    onValueChange={setSelectedLeadId}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecione um contato" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {leads.map((lead) => (
+                        <SelectItem key={lead.id} value={lead.id.toString()}>
+                          {lead.nome} ({lead.telefone})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+            ) : (
+              <NovaConversaNovoContatoForm
+                onCancel={() => setShowNewConversationModal(false)}
+                onSubmit={async ({ nome, telefone }) => {
+                  // Buscar dados do cliente logado a partir do id_cliente (busca pelo id numérico)
+                  if (!clienteInfo?.id) {
+                    toast.error('Cliente não identificado.');
+                    return;
+                  }
+                  console.log('Buscando dados completos do cliente pelo id:', clienteInfo.id);
+                  const clienteInfoCompleto = await clientesService.getClienteById(clienteInfo.id);
+                  console.log('Resultado do select em clientes_info:', clienteInfoCompleto);
+                  if (!clienteInfoCompleto || !clienteInfoCompleto.instance_id || !clienteInfoCompleto.instance_name) {
+                    toast.error('Conecte seu WhatsApp antes de criar um contato.');
+                    return;
+                  }
+
+                  // Verificar se o contato já existe
+                  const existingLead = await leadsService.checkLeadExists(clienteInfoCompleto.id, telefone);
+                  if (existingLead) {
+                    toast.error(`Contato já existe! Nome: ${existingLead.nome}, Telefone: ${existingLead.telefone}`);
+                    return;
+                  }
+
+                  // Buscar departamento padrão
+                  const idDepartamentoPadrao = clienteInfoCompleto.id_departamento_padrao ?? null;
+                  // Criar o lead com nome_instancia e instance_id vindos do clientes_info
+                  const leadToCreate = {
+                    nome,
+                    telefone,
+                    id_cliente: clienteInfoCompleto.id,
+                    status: "Novo",
+                    data_criacao: new Date().toISOString(),
+                    data_ultimo_status: new Date().toISOString(),
+                    nome_instancia: clienteInfoCompleto.instance_name, // mapeamento correto
+                    instance_id: clienteInfoCompleto.instance_id,
+                    score_qualificacao: 0,
+                    probabilidade_final_fechamento: 0,
+                      id_departamento: idDepartamentoPadrao,
+                  };
+                  console.log('Lead a ser criado (payload final):', leadToCreate);
+                  const created = await leadsService.createLead(leadToCreate as any);
+                  if (created) {
+                    toast.success("Contato criado com sucesso!");
+                    setShowNewConversationModal(false);
+                    setSelectedLeadId(created.id.toString());
+                    setNewConversationMode('existente');
+                    setLeads((prev) => [created, ...prev]);
+                    // Seleciona o contato pelo telefone normalizado
+                    handleContactChange(normalizePhone(created.telefone));
+                    setTimeout(() => {
+                      const input = document.querySelector<HTMLInputElement>("#mensagem-input");
+                      if (input) input.focus();
+                    }, 300);
+                    toast.success(`Conversa iniciada. Envie a primeira mensagem!`);
+                  } else {
+                    toast.error("Erro ao criar contato");
+                  }
+                }}
+              />
+            )}
+            <DialogFooter>
+              <Button
+                onClick={() => {
+                  if (newConversationMode === 'existente' && selectedLeadId) {
+                    const lead = leads.find(l => l.id.toString() === selectedLeadId);
+                    if (!lead) return;
+                    setShowNewConversationModal(false);
+                    setSelectedLeadId(null);
+                    setNewConversationMode('existente');
+                    // Selecionar contato na lista e abrir conversa
+                    const contact = contacts.find(c => normalizePhone(c.telefone_id) === normalizePhone(lead.telefone));
+                    if (contact) {
+                      handleContactChange(contact.id);
+                      setTimeout(() => {
+                        // Foca o campo de mensagem após selecionar o contato
+                        const input = document.querySelector<HTMLInputElement>("#mensagem-input");
+                        if (input) input.focus();
+                      }, 300);
+                      toast.success(`Conversa iniciada com ${lead.nome}. Envie a primeira mensagem!`);
+                    } else {
+                      // Se não encontrar, selecionar pelo telefone normalizado corretamente
+                      handleContactChange(normalizePhone(lead.telefone));
+                      setTimeout(() => {
+                        const input = document.querySelector<HTMLInputElement>("#mensagem-input");
+                        if (input) input.focus();
+                      }, 300);
+                      toast.info('Contato criado, envie a primeira mensagem!');
+                    }
+                  }
+                }}
+                disabled={newConversationMode === 'existente' && !selectedLeadId}
+                className="bg-primary-600 hover:bg-primary-700 text-white"
+              >
+                Iniciar conversa
+              </Button>
+              <Button variant="secondary" onClick={() => setShowNewConversationModal(false)}>
+                Cancelar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        {/* Modal de aviso de instância não conectada */}
+        <Dialog open={showInstanceWarning} onOpenChange={setShowInstanceWarning}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Conecte seu WhatsApp</DialogTitle>
+              <DialogDescription>
+                Para criar um novo contato, primeiro conecte seu número do WhatsApp nas configurações da conta. Assim, sua instância será criada e os contatos poderão ser atribuídos corretamente.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button onClick={() => setShowInstanceWarning(false)} className="bg-primary-600 hover:bg-primary-700 text-white">OK</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <ScrollArea className="flex-1">
+          {loading ? (
+            <div className="flex justify-center items-center h-32">
+              <p>Carregando conversas...</p>
+            </div>
+            ) : loadingLeads ? (
+              <div className="p-4 text-center text-gray-500">Carregando contatos...</div>
+          ) : contatosExibidos.length > 0 ? (
+            contatosExibidos
+              .map((contact) => (
+              (() => {
+                const attendance = attendanceMap[normalizePhone(contact.telefone_id)];
+                const conversationStatus = contactStatusMap[normalizePhone(contact.telefone_id)];
+                const statusNormalized = (conversationStatus || '').toLowerCase().replace(/\s+/g, '');
+                const isEmAndamento = !conversationStatus || statusNormalized === 'emandamento';
+                const isEncerrada = statusNormalized === 'encerrada';
+                
+                // Buscar o lead correspondente ao contato
+                const lead = leads.find(l =>
+                  String(l.instance_id) === String(contact.instance_id) &&
+                  normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact.telefone_id)
+                ) || leads.find(l => normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact.telefone_id));
+                
+                // Debug: Log para verificar se o lead foi encontrado e tem score
+                if (contact.name === 'Wesley Pontes' || contact.name === 'Smart chatbotbot') {
+                  console.log('Debug lead encontrado:', {
+                    contactName: contact.name,
+                    contactPhone: contact.telefone_id,
+                    leadFound: !!lead,
+                    leadScore: lead?.score_qualificacao,
+                    leadPhone: lead?.telefone,
+                    leadInstance: lead?.instance_id,
+                    contactInstance: contact.instance_id
+                  });
+                }
+                
+                // Obter etiquetas atuais do lead
+                const etiquetasAtuais = lead?.id_etiquetas 
+                  ? lead.id_etiquetas.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id))
+                  : [];
+                
+                const unreadKey = `${contact.instance_id || ''}_${normalizePhoneKey(contact.telefone_id || '')}`;
+                const unreadCount = unreadCounts[unreadKey] || 0;
+                const hasUnread = unreadCount > 0;
+                
+                return (
+                    <div className="max-w-full overflow-x-hidden" key={contact.id}>
+                      <ContextMenu onOpenChange={(open) => {
+                        if (open) {
+                          handleContextMenuOpen(contact);
+                        } else {
+                          handleContextMenuClose();
+                        }
+                      }}>
+                        <ContextMenuTrigger asChild>
+                  <button
+                        className={`w-full max-w-[400px] mx-auto p-4 flex items-center space-x-4 hover:bg-gray-100 ${
+                              selectedContact === contact.id ? "bg-gray-100" : hasUnread ? "bg-gray-200 border-l-4 border-primary-600" : ""
+                    } ${isEncerrada ? "opacity-75" : ""}`}
+                            onClick={() => handleContactChangeAndMarkRead(contact.id)}
+                  >
+                    <Avatar>
+                      <AvatarImage src={contact.avatar} />
+                      <AvatarFallback>
+                        {contact.name.substring(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                        <div className="flex-1 min-w-0 max-w-full">
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium truncate">{contact.name}</p>
+                            {/* Badge do departamento */}
+                            {(() => {
+                              const dep = lead && departamentos.find(d => String(d.id) === String(lead.id_departamento));
+                              return (
+                                <>
+                                  {/* Badge de follow-up automático */}
+                                  {lead?.followup_programado && (
+                                    <span className="ml-1" title="Follow-up automático ativado">
+                                      <span className="text-yellow-500">⏰</span>
+                          </span>
+                                      )}
+                                      {/* Etiquetas do lead */}
+                                      {lead && user?.id_cliente && (
+                                        <EtiquetasDisplay 
+                                          idEtiquetas={lead.id_etiquetas} 
+                                          idCliente={user.id_cliente}
+                                          maxEtiquetas={2}
+                                          showTooltip={true}
+                                        />
+                        )}
+                                </>
+                              );
+                            })()}
+                            {/* Etiquetas de atendimento */}
+                        {attendance && !isEncerrada && (
+                          <>
+                            {attendance.ia && (
+                              <span className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs">
+                                <Bot className="h-3 w-3" />
+                                IA
+                              </span>
+                            )}
+                            {attendance.humano && (
+                              <span className="flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">
+                                <User className="h-3 w-3" />
+                                Humano
+                              </span>
+                            )}
+                            {!attendance.ia && !attendance.humano && (
+                              <span className="flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs">
+                                <XCircle className="h-3 w-3" />
+                                Sem atendimento
+                              </span>
+                            )}
+                          </>
+                        )}
+                        {/* Score de Qualificação Final */}
+                        {(() => {
+                          const shouldShowScore = lead && typeof lead.score_final_qualificacao === 'number';
+                          if (contact.name && (contact.name === 'Wesley Pontes' || contact.name === 'Smart chatbotbot')) {
+                            console.log('Debug score display:', {
+                              contactName: contact.name,
+                              leadScore: lead?.score_final_qualificacao,
+                              shouldShowScore,
+                              isNumber: typeof lead?.score_final_qualificacao === 'number'
+                            });
+                          }
+                          return shouldShowScore ? (
+                            <span 
+                              className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium"
+                              style={{
+                                backgroundColor: lead.score_final_qualificacao >= 7 ? '#dcfce7' : 
+                                                lead.score_final_qualificacao >= 4 ? '#fef3c7' : '#fee2e2',
+                                color: lead.score_final_qualificacao >= 7 ? '#166534' : 
+                                       lead.score_final_qualificacao >= 4 ? '#92400e' : '#991b1b'
+                              }}
+                              title={`Score de Qualificação: ${lead.score_final_qualificacao.toFixed(1)}/10`}
+                            >
+                              <TrendingUp className="h-3 w-3" />
+                              {lead.score_final_qualificacao.toFixed(1)}
+                            </span>
+                          ) : null;
+                        })()}
+
+                      </div>
+                              {/* Última mensagem, horário/data e contador de não lidas */}
+                              <div className="flex items-center justify-between text-xs text-gray-500 mt-1 relative">
+                            <span className="block truncate max-w-[calc(100%-70px)]">
+                              {contact.lastMessageType === 'audio' ? (
+                                <span className="flex items-center gap-1 text-gray-500">
+                                  <Mic className="h-4 w-4 inline-block" />
+                                  Áudio
+                                </span>
+                              ) : contact.lastMessageType === 'imagem' ? (
+                                <span className="flex items-center gap-1 text-gray-500">
+                                  <Paperclip className="h-4 w-4 inline-block" />
+                                  Imagem
+                                </span>
+                              ) : contact.lastMessageType === 'video' ? (
+                                <span className="flex items-center gap-1 text-gray-500">
+                                  <span role="img" aria-label="Vídeo">🎥</span>
+                                  Vídeo
+                                </span>
+                              ) : (
+                                contact.lastMessage.replace(/\\n/g, ' ')
+                              )}
+                            </span>
+                                <div className="flex flex-col items-end ml-2">
+                                  {hasUnread && (
+                                    <span className="mb-0.5 bg-primary-600 text-white rounded-full px-2 py-0.5 text-xs font-bold shadow" style={{ minWidth: 22, textAlign: 'center' }}>{unreadCount}</span>
+                                  )}
+                                  <span className="whitespace-nowrap flex-shrink-0">{formatContactTime(contact.lastMessageTime)}</span>
+                                </div>
+                    </div>
+                    </div>
+                  </button>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          <ContextMenuItem onClick={() => {
+                            if (contextMenuContact) {
+                              handleContactChange(contextMenuContact.id);
+                            }
+                          }}>
+                            <MessageSquare className="h-4 w-4 mr-2" />
+                            Abrir conversa
+                          </ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <div className="px-2 py-1.5 text-sm font-semibold text-gray-700">
+                            Etiquetas
+                          </div>
+                          {loadingEtiquetas ? (
+                            <ContextMenuItem disabled>
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600 mr-2"></div>
+                              Carregando etiquetas...
+                            </ContextMenuItem>
+                          ) : etiquetas.length === 0 ? (
+                            <ContextMenuItem disabled>
+                              <Tag className="h-4 w-4 mr-2" />
+                              Nenhuma etiqueta disponível
+                            </ContextMenuItem>
+                          ) : (
+                            <>
+                              {/* Etiquetas disponíveis para adicionar */}
+                              {etiquetas
+                                .filter(etiqueta => !etiquetasAtuais.includes(etiqueta.id))
+                                .slice(0, 5) // Limitar a 5 opções para não sobrecarregar o menu
+                                .map(etiqueta => (
+                                  <ContextMenuItem 
+                                    key={`add-${etiqueta.id}`}
+                                    onClick={() => handleAddEtiqueta(etiqueta.id)}
+                                    disabled={etiquetasAtuais.length >= 3}
+                                  >
+                                    <div 
+                                      className="w-3 h-3 rounded-full mr-2 border border-gray-300"
+                                      style={{ backgroundColor: etiqueta.cor }}
+                                    />
+                                    Adicionar "{etiqueta.nome}"
+                                  </ContextMenuItem>
+                                ))
+                              }
+                              
+                              {/* Etiquetas já atribuídas */}
+                              {etiquetasAtuais.length > 0 && (
+                                <>
+                                  <ContextMenuSeparator />
+                                  <div className="px-2 py-1.5 text-sm font-semibold text-gray-700">
+                                    Etiquetas atribuídas
+                                  </div>
+                                  {etiquetas
+                                    .filter(etiqueta => etiquetasAtuais.includes(etiqueta.id))
+                                    .map(etiqueta => (
+                                      <ContextMenuItem 
+                                        key={`remove-${etiqueta.id}`}
+                                        onClick={() => handleRemoveEtiqueta(etiqueta.id)}
+                                      >
+                                        <div 
+                                          className="w-3 h-3 rounded-full mr-2 border border-gray-300"
+                                          style={{ backgroundColor: etiqueta.cor }}
+                                        />
+                                        Remover "{etiqueta.nome}"
+                                      </ContextMenuItem>
+                                    ))
+                                  }
+                                </>
+                              )}
+                            </>
+                          )}
+                        </ContextMenuContent>
+                      </ContextMenu>
+                    </div>
+                );
+              })()
+            ))
+          ) : (
+              <div className="p-4 text-center text-gray-500">Nenhum contato encontrado</div>
+          )}
+        </ScrollArea>
+      </div>
+
+      {/* Área de conversa - 2/3 da tela */}
+        <div className={`flex-1 min-w-0 max-w-full overflow-hidden flex flex-col h-full ${mobileView === 'list' ? 'hidden' : ''} md:flex`}>
+          {/* Botão de voltar no mobile */}
+          {window.innerWidth < 768 && (
+            <button
+              className="flex items-center gap-2 p-4 border-b bg-white md:hidden"
+              onClick={() => {
+                setSelectedContact(null);
+                setMobileView('list');
+              }}
+            >
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+              Voltar
+            </button>
+          )}
+        {selectedContact ? (
+          <>
+            {/* Cabeçalho fixo */}
+            <div className="p-4 border-b flex justify-between items-center bg-white shrink-0">
+              <div className="flex items-center gap-4">
+                <div className="flex flex-col">
+                <h2 className="text-lg font-semibold">
+                    {getSelectedContactInfo()?.name || 'Contato'}
+                </h2>
+                  <span className="text-xs text-gray-400">
+                    {normalizePhone(getSelectedContactInfo()?.telefone_id || '')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* Badge do departamento */}
+                  {(() => {
+                    const contact = getSelectedContactInfo();
+                    if (!contact) return null;
+
+                    const lead = leads.find(l => normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact.telefone_id));
+                    
+                    if (!lead) {
+                      return (
+                        <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-sm bg-gray-100 text-gray-700`}>
+                          <GitBranch className="h-4 w-4" />
+                          Sem departamento
+                        </span>
+                      );
+                    }
+                    
+                    const dep = departamentos.find(d => String(d.id) === String(lead.id_departamento));
+                    const depNome = dep ? dep.nome : "Sem departamento";
+                    
+                    return (
+                      <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-sm ${dep ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-700'}`}>
+                        <GitBranch className="h-4 w-4" />
+                        {depNome}
+                      </span>
+                    );
+                  })()}
+
+
+                </div>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon">
+                    <MoreVertical className="h-5 w-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={handleAIAttendance}>
+                    <Bot className="h-4 w-4 mr-2" />
+                    Atendimento por IA
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleHumanAttendance}>
+                    <User className="h-4 w-4 mr-2" />
+                    Atendimento humano
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleSaleCompleted}>
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Venda Realizada
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => {
+                    // Busca robusta do lead do contato aberto
+                    const contact = contacts.find(c => c.id === selectedContact);
+                    const lead = leads.find(l =>
+                      String(l.instance_id) === String(contact?.instance_id) &&
+                      normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact?.telefone_id)
+                    ) || leads.find(l => normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact?.telefone_id));
+                    setSelectedLeadId(lead?.id?.toString() || null);
+                    handleOpenTransferModal();
+                  }}>
+                    <GitBranch className="h-4 w-4 mr-2" />
+                    Transferir departamento
+                  </DropdownMenuItem>
+                  {(() => {
+                    const contact = contacts.find(c => c.id === selectedContact);
+                    const normalizedPhone = contact ? normalizePhone(contact.telefone_id) : '';
+                    const conversationStatus = contactStatusMap[normalizedPhone];
+                    const statusNormalized = (conversationStatus || '').toLowerCase().replace(/\s+/g, '');
+                    const isEmAndamento = !conversationStatus || statusNormalized === 'emandamento';
+                    const isEncerrada = statusNormalized === 'encerrada';
+                    
+                    if (isEncerrada) {
+                      return (
+                        <DropdownMenuItem onClick={handleResumeConversation}>
+                          <PlayCircle className="h-4 w-4 mr-2" />
+                          Retomar conversa
+                        </DropdownMenuItem>
+                      );
+                    } else {
+                      return (
+                        <DropdownMenuItem onClick={handleEndConversation}>
+                          <XCircle className="h-4 w-4 mr-2" />
+                          Encerrar atendimento
+                        </DropdownMenuItem>
+                      );
+                    }
+                  })()}
+                  <DropdownMenuItem onClick={handleAutomaticFollowup} disabled={isGeneratingFollowup}>
+                    {isGeneratingFollowup ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                        Gerando follow-up...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Follow-up automático
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleInserirNoFollowupProgramado}>
+                    <Repeat className="h-4 w-4 mr-2" />
+                    Inserir no Followup Programado
+                  </DropdownMenuItem>
+                  {clienteInfo?.instance_id && clienteInfo?.instance_id_2 && (
+                    <DropdownMenuItem onClick={handleAlternarChip}>
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Duplicar no Outro Chip
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
+            {/* Área de mensagens rolável */}
+              <div className="flex-1 min-h-0 p-4 overflow-y-auto bg-gray-50 pb-28 md:pb-0">
+              {selectedContactMessages.length > 0 ? (
+                groupMessagesByDate(selectedContactMessages).map((group) => (
+                  <div key={group.date}>
+                    {/* Separador de data */}
+                    <div className="flex justify-center mb-4">
+                      <div className="bg-gray-100 text-gray-500 text-sm px-4 py-2 rounded-lg shadow-sm border">
+                        {formatDateSeparator(group.dateObject)}
+                      </div>
+                    </div>
+                    {/* Mensagens do dia */}
+                    {group.messages.map((msg) => (
+                      <div
+                        key={msg.id || msg.created_at}
+                        className={`mb-4 flex ${
+                          msg.tipo ? 'justify-end' : 'justify-start'
+                        }`}
+                      >
+                        <Card
+                          className={`max-w-[70%] p-3 ${
+                            msg.tipo
+                              ? 'bg-blue-500 text-white'
+                              : 'bg-gray-100'
+                          }`}
+                        >
+                          {renderMessageContent(msg)}
+                          <p className="text-xs opacity-70 mt-1">
+                            {format(
+                              new Date(msg.timestamp || msg.created_at),
+                              'HH:mm',
+                              { locale: ptBR }
+                            )}
+                          </p>
+                        </Card>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              ) : (
+                <div className="flex flex-col justify-center items-center h-full text-gray-500">
+                  Nenhuma mensagem disponível<br />
+                  <span className="text-primary-600 font-medium mt-2">Envie a primeira mensagem!</span>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+              {/* Campo de mensagem fixo padrão WhatsApp */}
+              <div className="w-full bg-white border-t p-2 flex items-center gap-2 fixed bottom-0 left-0 z-10 md:static md:z-auto md:p-4 md:border-0">
+              {showAudioRecorder ? (
+                <AudioRecorderMP3
+                  onSendAudio={handleSendAudio}
+                  onCancel={() => {
+                    setShowAudioRecorder(false);
+                    setIsRecording(false);
+                  }}
+                  isRecording={isRecording}
+                  onStartRecording={() => setIsRecording(true)}
+                  onStopRecording={() => setIsRecording(false)}
+                />
+              ) : showImageUploader ? (
+                <ImageUploader
+                  onSendImage={handleSendImage}
+                  onCancel={() => setShowImageUploader(false)}
+                />
+              ) : showVideoUploader ? (
+                <VideoUploader
+                  onSendVideo={handleSendVideo}
+                  onCancel={() => setShowVideoUploader(false)}
+                />
+              ) : (
+                  <>
+                  <Textarea
+                    id="mensagem-input"
+                    placeholder="Digite sua mensagem..."
+                    value={message}
+                    onChange={e => setMessage(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                    className="flex-1 min-h-[40px] max-h-40 resize-y border-none bg-transparent focus:ring-0 focus:outline-none text-base"
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={isSending}
+                  />
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    onClick={startRecording}
+                    className="text-gray-600 hover:text-blue-600"
+                  >
+                    <Mic className="h-4 w-4" />
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    onClick={() => setShowImageUploader(true)}
+                    className="text-gray-600 hover:text-blue-600"
+                  >
+                    <Paperclip className="h-4 w-4" />
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    onClick={() => setShowVideoUploader(true)}
+                    className="text-gray-600 hover:text-green-600"
+                  >
+                    <span role="img" aria-label="Vídeo">🎬</span>
+                  </Button>
+                  <Button onClick={handleSendMessage} disabled={isSending || !message.trim() || !selectedContact}>
+                    <Send className="h-4 w-4 mr-2" />
+                    {isSending ? 'Enviando...' : 'Enviar'}
+                  </Button>
+                  </>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex justify-center items-center h-full text-gray-500">
+            Selecione um contato para iniciar uma conversa
+          </div>
+        )}
+      </div>
+    </div>
+
+      {/* Modal de Transferência */}
+      <Dialog open={showTransferModal} onOpenChange={setShowTransferModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Transferir para departamento</DialogTitle>
+            <DialogDescription>
+              Selecione o departamento para onde deseja transferir este atendimento
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Select
+              value={selectedDepartamento || ''}
+              onValueChange={setSelectedDepartamento}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione um departamento" />
+              </SelectTrigger>
+              <SelectContent>
+                {departamentos.map((dep) => (
+                  <SelectItem key={dep.id} value={dep.id.toString()}>
+                    {dep.nome}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowTransferModal(false)} disabled={transferring}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleTransferDepartamento} 
+              disabled={!selectedDepartamento || transferring}
+            >
+              {transferring ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Transferindo...
+                </>
+              ) : (
+                "Transferir"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+};
+
+export default Conversations;

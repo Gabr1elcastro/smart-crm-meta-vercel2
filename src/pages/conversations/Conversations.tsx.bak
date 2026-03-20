@@ -1,0 +1,509 @@
+import React, { useState, useEffect } from "react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Search, Filter, Send, Paperclip, Bot, CheckCircle } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { supabase, Tables } from "@/lib/supabase";
+import { useAuth } from "@/contexts/auth";
+import { useToast } from "@/hooks/use-toast";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { sendMessage } from '@/services/messageService';
+import { generateRandomPhoneNumber } from '@/utils/phoneNumberGenerator';
+import { toast } from 'sonner';
+import { ScrollArea } from '@/components/ui/scroll-area';
+
+interface Conversation {
+  id: string;
+  user_id: string;
+  user_id_auth?: string;
+  conversa_id: string;
+  mensagem: string;
+  timestamp: string;
+  tipo: boolean;
+  telefone_id?: string;
+  instância_Id: string;
+  name?: string;
+  created_at: string;
+}
+
+type Contact = {
+  id: string;
+  name: string;
+  lastMessage: string;
+  lastMessageTime: string;
+  avatar?: string;
+  telefone_id?: string;
+  created_at?: string;
+};
+
+export const Conversations = () => {
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [selectedContact, setSelectedContact] = useState<string | null>(null);
+  const [message, setMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const { user } = useAuth();
+
+  // Função para buscar conversas do Supabase
+  const fetchConversations = async () => {
+    if (!user) return;
+
+    console.log('Iniciando busca de conversas para o usuário:', user.id);
+    console.log('Status da autenticação:', user ? 'Autenticado' : 'Não autenticado');
+
+    try {
+      const { data, error } = await supabase
+        .from('agente_conversacional_whatsapp')
+        .select('*')
+        .eq('user_id_auth', user.id)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      console.log('Dados recebidos:', data);
+      setConversations(data || []);
+
+      // Processa os dados para criar a lista de contatos
+      const uniqueContacts = new Map<string, Contact>();
+      
+      data?.forEach(conv => {
+        if (!conv.telefone_id) return; // Ignora mensagens sem telefone_id
+        
+        if (!uniqueContacts.has(conv.telefone_id)) {
+          uniqueContacts.set(conv.telefone_id, {
+            id: conv.telefone_id, // Usa telefone_id como ID do contato
+            name: conv.name || `Contato ${conv.telefone_id.slice(-4)}`,
+            lastMessage: conv.mensagem,
+            lastMessageTime: conv.timestamp,
+            avatar: undefined,
+            telefone_id: conv.telefone_id
+          });
+        } else {
+          const contact = uniqueContacts.get(conv.telefone_id)!;
+          if (new Date(conv.timestamp) > new Date(contact.lastMessageTime)) {
+            contact.lastMessage = conv.mensagem;
+            contact.lastMessageTime = conv.timestamp;
+          }
+        }
+      });
+
+      setContacts(Array.from(uniqueContacts.values()));
+    } catch (error) {
+      console.error('Erro ao buscar conversas:', error);
+    }
+  };
+
+  // Função para salvar mensagem no Supabase
+  const saveMessageToSupabase = async (message: Conversation) => {
+    try {
+      // Adiciona o user_id_auth à mensagem
+      const messageWithUserId = {
+        ...message,
+        user_id_auth: user?.id
+      };
+      
+      const { data, error } = await supabase
+        .from('agente_conversacional_whatsapp')
+        .insert([messageWithUserId])
+        .select();
+
+      if (error) {
+        console.error('Erro ao salvar mensagem:', error);
+        return null;
+      }
+
+      console.log('Mensagem salva no Supabase:', data);
+      return data?.[0];
+    } catch (error) {
+      console.error('Erro ao processar mensagem:', error);
+      return null;
+    }
+  };
+
+  // Configura a subscription para novas mensagens
+  useEffect(() => {
+    if (!user) return;
+
+    console.log('Fazendo fetch inicial das conversas...');
+    fetchConversations();
+
+    console.log('Configurando subscription para novas mensagens...');
+    console.log('User ID atual:', user.id);
+
+    const subscription = supabase
+      .channel('whatsapp_messages')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'agente_conversacional_whatsapp',
+          filter: `user_id_auth=eq.${user.id}` // Filtrar por user_id_auth
+        },
+        async (payload) => {
+          console.log('Mudança detectada:', payload);
+          
+          if (payload.eventType === 'INSERT') {
+            const newMessage = payload.new as Conversation;
+            console.log('Nova mensagem recebida:', newMessage);
+            
+            // Verifica se a mensagem já existe no banco de dados
+            const { data: existingMessage, error: checkError } = await supabase
+              .from('agente_conversacional_whatsapp')
+              .select('id')
+              .eq('id', newMessage.id)
+              .single();
+
+            if (checkError && checkError.code !== 'PGRST116') {
+              console.error('Erro ao verificar mensagem existente:', checkError);
+              return;
+            }
+
+            // Se a mensagem não existe, tenta inserir
+            if (!existingMessage) {
+              const savedMessage = await saveMessageToSupabase(newMessage);
+              if (!savedMessage) return;
+            }
+
+            // Atualiza a lista de conversas
+            setConversations(prev => {
+              const exists = prev.some(msg => msg.id === newMessage.id);
+              if (!exists) {
+                const updated = [...prev, newMessage].sort((a, b) => {
+                  // Converte as datas para o fuso horário local
+                  const dateA = new Date(a.created_at);
+                  const dateB = new Date(b.created_at);
+                  
+                  // Ajusta para o fuso horário local
+                  const localDateA = new Date(dateA.getTime() - dateA.getTimezoneOffset() * 60000);
+                  const localDateB = new Date(dateB.getTime() - dateB.getTimezoneOffset() * 60000);
+                  
+                  return localDateA.getTime() - localDateB.getTime();
+                });
+                console.log('Conversas atualizadas:', updated);
+                return updated;
+              }
+              return prev;
+            });
+
+            // Atualiza ou adiciona o contato baseado no telefone_id
+            setContacts(prev => {
+              if (!newMessage.telefone_id) return prev;
+              
+              const existingContact = prev.find(c => c.telefone_id === newMessage.telefone_id);
+              if (existingContact) {
+                const updated = prev.map(contact => 
+                  contact.telefone_id === newMessage.telefone_id
+                    ? {
+                        ...contact,
+                        lastMessage: newMessage.mensagem,
+                        lastMessageTime: newMessage.timestamp,
+                        created_at: newMessage.created_at
+                      }
+                    : contact
+                ).sort((a, b) => {
+                  // Converte as datas para o fuso horário local
+                  const dateA = new Date(a.lastMessageTime);
+                  const dateB = new Date(b.lastMessageTime);
+                  
+                  // Ajusta para o fuso horário local
+                  const localDateA = new Date(dateA.getTime() - dateA.getTimezoneOffset() * 60000);
+                  const localDateB = new Date(dateB.getTime() - dateB.getTimezoneOffset() * 60000);
+                  
+                  return localDateB.getTime() - localDateA.getTime();
+                });
+                console.log('Contatos atualizados:', updated);
+                return updated;
+              } else {
+                // Novo contato
+                const newContact: Contact = {
+                  id: newMessage.telefone_id,
+                  name: newMessage.name || `Contato ${newMessage.telefone_id.slice(-4)}`,
+                  lastMessage: newMessage.mensagem,
+                  lastMessageTime: newMessage.timestamp,
+                  telefone_id: newMessage.telefone_id,
+                  avatar: undefined
+                };
+                
+                return [...prev, newContact].sort((a, b) => {
+                  // Converte as datas para o fuso horário local
+                  const dateA = new Date(a.lastMessageTime);
+                  const dateB = new Date(b.lastMessageTime);
+                  
+                  // Ajusta para o fuso horário local
+                  const localDateA = new Date(dateA.getTime() - dateA.getTimezoneOffset() * 60000);
+                  const localDateB = new Date(dateB.getTime() - dateB.getTimezoneOffset() * 60000);
+                  
+                  return localDateB.getTime() - localDateA.getTime();
+                });
+              }
+            });
+            
+            // Se a mensagem não foi criada pelo usuário, tocar som e mostrar notificação
+            if (!newMessage.tipo) {
+              // Sound notification code here if needed
+              toast.info(`Nova mensagem de ${newMessage.name || newMessage.telefone_id}`);
+            }
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('Status da subscription:', status);
+      });
+
+    // Limpa a subscription quando o componente é desmontado
+    return () => {
+      console.log('Desconectando subscription...');
+      subscription.unsubscribe();
+    };
+  }, [user]);
+
+  // Função para enviar mensagem
+  const handleSendMessage = async () => {
+    if (!message.trim() || !selectedContact) return;
+
+    try {
+      // Busca o telefone do contato selecionado
+      const contactData = contacts.find(c => c.id === selectedContact);
+      if (!contactData?.telefone_id) {
+        console.error('Telefone não encontrado para o contato');
+        toast.error('Erro ao enviar mensagem');
+        return;
+      }
+
+      // Envia a mensagem usando o serviço de mensagens
+      const response = await sendMessage(contactData.telefone_id, message);
+      console.log('Resposta do serviço de mensagens:', response);
+
+      // Atualiza o estado local com a mensagem enviada
+      const newMessage: Conversation = {
+        id: Date.now().toString(), // ID temporário para o estado local
+        user_id: user?.id || '',
+        user_id_auth: user?.id, // Adiciona o user_id_auth
+        conversa_id: selectedContact,
+        mensagem: message,
+        timestamp: new Date().toISOString(),
+        tipo: true, // true para mensagens enviadas
+        telefone_id: contactData.telefone_id,
+        instância_Id: 'smartcrm',
+        created_at: new Date().toISOString()
+      };
+
+      // Atualiza o estado local
+      setConversations(prev => {
+        const exists = prev.some(msg => msg.id === newMessage.id);
+        if (!exists) {
+          const updated = [...prev, newMessage].sort((a, b) => {
+            // Converte as datas para o fuso horário local
+            const dateA = new Date(a.created_at);
+            const dateB = new Date(b.created_at);
+            
+            // Ajusta para o fuso horário local
+            const localDateA = new Date(dateA.getTime() - dateA.getTimezoneOffset() * 60000);
+            const localDateB = new Date(dateB.getTime() - dateB.getTimezoneOffset() * 60000);
+            
+            return localDateA.getTime() - localDateB.getTime();
+          });
+          console.log('Conversas atualizadas:', updated);
+          return updated;
+        }
+        return prev;
+      });
+      setMessage('');
+
+      // Atualiza o último contato
+      setContacts(prev => 
+        prev.map(contact => 
+          contact.id === selectedContact
+            ? {
+                ...contact,
+                lastMessage: message,
+                lastMessageTime: new Date().toISOString()
+              }
+            : contact
+        )
+      );
+
+      toast.success('Mensagem enviada com sucesso!');
+    } catch (error) {
+      console.error('Erro ao enviar mensagem:', error);
+      toast.error('Erro ao enviar mensagem');
+    }
+  };
+
+  // Filtra as conversas do contato selecionado
+  const selectedConversations = conversations
+    .filter(conv => {
+      if (selectedContact) {
+        const selectedContactData = contacts.find(c => c.id === selectedContact);
+        return conv.telefone_id === selectedContactData?.telefone_id;
+      }
+      return false;
+    })
+    .sort((a, b) => {
+      // Converte as datas para o fuso horário local
+      const dateA = new Date(a.created_at);
+      const dateB = new Date(b.created_at);
+      
+      // Ajusta para o fuso horário local
+      const localDateA = new Date(dateA.getTime() - dateA.getTimezoneOffset() * 60000);
+      const localDateB = new Date(dateB.getTime() - dateB.getTimezoneOffset() * 60000);
+      
+      return localDateA.getTime() - localDateB.getTime();
+    });
+
+  console.log('Conversas selecionadas:', selectedConversations);
+  console.log('Contato selecionado:', selectedContact);
+  console.log('Telefone do contato selecionado:', contacts.find(c => c.id === selectedContact)?.telefone_id);
+  
+  return (
+    <div className="flex h-full">
+      {/* Lista de contatos */}
+      <div className="w-80 border-r">
+        <div className="p-4 border-b">
+          <h2 className="text-lg font-semibold">Conversas</h2>
+        </div>
+        <ScrollArea className="h-[calc(100vh-4rem)]">
+          {contacts.map((contact) => (
+            <div
+              key={contact.id}
+              className={`p-4 border-b cursor-pointer hover:bg-gray-50 ${
+                selectedContact === contact.id ? 'bg-blue-50' : ''
+              }`}
+              onClick={() => setSelectedContact(contact.id)}
+            >
+              <div className="flex items-center gap-3">
+                <Avatar>
+                  <AvatarImage src={contact.avatar} />
+                  <AvatarFallback>
+                    {contact.name.split(' ').map(n => n[0]).join('')}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{contact.name}</p>
+                  <p className="text-sm text-gray-500 truncate">
+                    {contact.lastMessage}
+                  </p>
+                  </div>
+                <div className="text-xs text-gray-500">
+                  {format(
+                    new Date(contact.lastMessageTime),
+                    'HH:mm',
+                    { locale: ptBR }
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </ScrollArea>
+      </div>
+      
+      {/* Área de conversa */}
+      <div className="flex-1 flex flex-col">
+        {selectedContact ? (
+          <>
+            <div className="p-4 border-b flex justify-between items-center">
+              <h2 className="text-lg font-semibold">
+                {contacts.find(c => c.id === selectedContact)?.name}
+              </h2>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    Ações
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => toast.info('Funcionalidade em desenvolvimento')}>
+                    <Bot className="mr-2 h-4 w-4" />
+                    Follow up com IA
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => toast.info('Funcionalidade em desenvolvimento')}>
+                    <CheckCircle className="mr-2 h-4 w-4" />
+                    Finalizar atendimento
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => toast.info('Funcionalidade em desenvolvimento')}>
+                    <CheckCircle className="mr-2 h-4 w-4" />
+                    Venda realizada
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => toast.info('Funcionalidade em desenvolvimento')}>
+                    <CheckCircle className="mr-2 h-4 w-4" />
+                    Encerrar conversa
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            <ScrollArea className="flex-1 p-4">
+              {selectedConversations.map((conv) => (
+                <div
+                  key={conv.id}
+                  className={`mb-4 flex ${
+                    conv.tipo ? 'justify-end' : 'justify-start'
+                  }`}
+                >
+                  <Card
+                    className={`max-w-[70%] p-3 ${
+                      conv.tipo
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-100'
+                    }`}
+                  >
+                    <p>{conv.mensagem}</p>
+                    <p className="text-xs opacity-70 mt-1">
+                      {format(
+                        new Date(conv.timestamp),
+                        'HH:mm',
+                        { locale: ptBR }
+                      )}
+                    </p>
+                  </Card>
+                </div>
+              ))}
+            </ScrollArea>
+            <div className="p-4 border-t">
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Digite sua mensagem..."
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                />
+                <Button variant="outline" size="icon">
+                  <Paperclip className="h-4 w-4" />
+                </Button>
+                <Button onClick={handleSendMessage} disabled={isSending || !message.trim()}>
+                  <Send className="h-4 w-4 mr-2" />
+                  {isSending ? 'Enviando...' : 'Enviar'}
+                </Button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-gray-500">Selecione uma conversa para começar</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default Conversations;
