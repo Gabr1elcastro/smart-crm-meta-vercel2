@@ -491,6 +491,48 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
     clienteId = await getIdClienteLogado();
   }
   
+  // Verificar se cliente tem Cloud API ativa
+  if (clienteId) {
+    const { data: metaConn } = await supabase
+      .from("meta_connections")
+      .select("access_token, needs_reauth")
+      .eq("id_cliente", clienteId)
+      .single();
+
+    const { data: waNumber } = await supabase
+      .from("wa_numbers")
+      .select("phone_number_id")
+      .eq("id_cliente", clienteId)
+      .single();
+
+    if (metaConn?.access_token && !metaConn?.needs_reauth && waNumber?.phone_number_id) {
+      const metaResponse = await fetch(
+        `https://graph.facebook.com/v21.0/${waNumber.phone_number_id}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${metaConn.access_token}`,
+          },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            to: number,
+            type: "text",
+            text: { body: text },
+          }),
+        }
+      );
+
+      if (metaResponse.ok) {
+        getNomeAtendente().then((nome) => {
+          setTimeout(() => updateNomeAtendenteParaUltimaMensagem(number, nome), 1500);
+        }).catch(() => {});
+        return metaResponse.json();
+      }
+      // Se falhou, continuar para Evolution/UAZAPI como fallback
+    }
+  }
+
   // Usar o number como telefone se telefone não for fornecido
   let telefoneParaBusca = telefone || number;
   
