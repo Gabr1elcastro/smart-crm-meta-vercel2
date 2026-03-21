@@ -1187,14 +1187,25 @@ export async function fetchMessagesWithPagination(
   phoneNumber?: string,
   page: number = 0,
   limit: number = 50,
-  fromDate?: string
+  fromDate?: string,
+  idCliente?: number
 ) {
   try {
     let query = supabase
       .from('agente_conversacional_whatsapp')
-      .select('*')
-      .in('instance_id', instanceIds)
-      .order('created_at', { ascending: false });
+      .select('*');
+
+    // Priorizar id_cliente se fornecido, senão usar instance_ids
+    if (idCliente) {
+      query = query.eq('id_cliente', idCliente);
+    } else if (instanceIds && instanceIds.length > 0) {
+      query = query.in('instance_id', instanceIds);
+    } else {
+      // Se nenhum filtro for fornecido, retornar vazio
+      return { messages: [], hasMore: false, totalCount: 0 };
+    }
+
+    query = query.order('created_at', { ascending: false });
 
     // Filtrar por telefone se especificado
     if (phoneNumber) {
@@ -1236,16 +1247,29 @@ export async function fetchMessagesWithPagination(
 export async function fetchRecentMessages(
   instanceIds: string[],
   phoneNumber: string,
-  limit: number = 500
+  limit: number = 500,
+  idCliente?: number
 ) {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('agente_conversacional_whatsapp')
-      .select('*')
-      .in('instance_id', instanceIds)
+      .select('*');
+
+    // Priorizar id_cliente se fornecido
+    if (idCliente) {
+      query = query.eq('id_cliente', idCliente);
+    } else if (instanceIds && instanceIds.length > 0) {
+      query = query.in('instance_id', instanceIds);
+    } else {
+      return [];
+    }
+
+    query = query
       .eq('telefone_id', phoneNumber)
       .order('created_at', { ascending: true })
       .limit(limit);
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('Erro ao buscar mensagens recentes:', error);
@@ -1263,12 +1287,20 @@ export async function fetchRecentMessages(
 export function setupMessagesSubscription(
   instanceIds: string[],
   onNewMessage: (message: any) => void,
-  onError?: (error: any) => void
+  onError?: (error: any) => void,
+  idCliente?: number
 ) {
   try {
-    // Criar canal único para evitar duplicações
-    const channelName = `messages_${instanceIds.join('_')}_${Date.now()}`;
+    // Criar canal único
+    const channelName = idCliente 
+      ? `messages_client_${idCliente}_${Date.now()}`
+      : `messages_${instanceIds.join('_')}_${Date.now()}`;
     
+    // Configurar filtro decido pelo id_cliente ou instance_ids
+    const filterValue = idCliente 
+      ? `id_cliente=eq.${idCliente}`
+      : `instance_id=in.(${instanceIds.map(id => `"${id}"`).join(',')})`;
+
     const subscription = supabase
       .channel(channelName)
       .on(
@@ -1277,7 +1309,7 @@ export function setupMessagesSubscription(
           event: 'INSERT',
           schema: 'public',
           table: 'agente_conversacional_whatsapp',
-          filter: `instance_id=in.(${instanceIds.map(id => `"${id}"`).join(',')})`
+          filter: filterValue
         },
         (payload) => {
           console.log('Nova mensagem recebida via subscription:', payload);
@@ -1290,7 +1322,7 @@ export function setupMessagesSubscription(
           event: 'UPDATE',
           schema: 'public',
           table: 'agente_conversacional_whatsapp',
-          filter: `instance_id=in.(${instanceIds.map(id => `"${id}"`).join(',')})`
+          filter: filterValue
         },
         (payload) => {
           console.log('Mensagem atualizada via subscription:', payload);

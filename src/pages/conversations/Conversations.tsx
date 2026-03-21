@@ -21,7 +21,7 @@ import {
 import { useAuth } from "@/contexts/auth";
 import { useUserType } from "@/hooks/useUserType";
 import { supabase } from "@/lib/supabase";
-import { sendMessage, sendAudioMessage, sendImageMessage, sendVideoMessage, sendDocumentMessage } from '@/services/messageService';
+import { sendMessage, sendAudioMessage, sendImageMessage, sendVideoMessage, sendDocumentMessage, setupMessagesSubscription, removeMessagesSubscription } from '@/services/messageService';
 import { AudioPlayer } from '@/components/AudioPlayer';
 import { AudioPlayerSimples } from '@/components/AudioPlayerSimples';
 import { AudioPlayerAdvanced } from '@/components/AudioPlayerAdvanced';
@@ -499,9 +499,9 @@ export const Conversations = () => {
 
 
 
-  // 3. Função para buscar conversas usando ambos os instance_id
+  // 3. Função para buscar conversas usando ambos os instance_id ou id_cliente
   const fetchConversations = useCallback(async (showLoading = true) => {
-    if (!user || (!instanceId1 && !instanceId2)) {
+    if (!user || (!user.id_cliente && !instanceId1 && !instanceId2)) {
       if (showLoading) setLoading(false);
       return;
     }
@@ -510,17 +510,22 @@ export const Conversations = () => {
 
     try {
       const ids = [instanceId1, instanceId2].filter(Boolean);
-      if (ids.length === 0) {
+      // Buscar mensagens usando id_cliente (unificação total) ou fallback para instance_ids
+      let query = supabase
+        .from('agente_conversacional_whatsapp')
+        .select('*');
+
+      if (user.id_cliente) {
+        query = query.eq('id_cliente', user.id_cliente);
+      } else if (ids.length > 0) {
+        query = query.in('instance_id', ids);
+      } else {
         setConversations([]);
         if (showLoading) setLoading(false);
         return;
       }
-      // Buscar mensagens usando ambos os instance_id
-      const { data, error } = await supabase
-        .from('agente_conversacional_whatsapp')
-        .select('*')
-        .in('instance_id', ids)
-        .order('created_at', { ascending: false });
+
+      const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) {
         console.error('Erro ao carregar conversas:', error);
@@ -561,152 +566,106 @@ export const Conversations = () => {
 
   // Implementando realtime via Supabase subscriptions
 
-  // 4. Executar a busca de conversas quando instanceId1 ou instanceId2 estiverem disponíveis
+  // 4. Executar a busca de conversas quando id_cliente ou instâncias estiverem disponíveis
   useEffect(() => {
-    if (instanceId1 || instanceId2) {
+    if (user?.id_cliente || instanceId1 || instanceId2) {
       fetchConversations();
     }
-  }, [instanceId1, instanceId2, fetchConversations]);
+  }, [user?.id_cliente, instanceId1, instanceId2, fetchConversations]);
 
-  // 5. Configuração da subscription para novas mensagens com instance_id
+  // 5. Configuração da subscription para novas mensagens com id_cliente ou instance_id
   useEffect(() => {
-    if (!instanceId1 && !instanceId2) return;
+    if (!user?.id_cliente && !instanceId1 && !instanceId2) return;
     
     // Cache para evitar processar a mesma mensagem múltiplas vezes
-    const processedMessages = new Set();
-    let lastProcessTime = 0;
+    const instanceIds = [instanceId1, instanceId2].filter(Boolean) as string[];
     
-    // Configurar subscription realtime para mensagens
-    const instanceIds = [instanceId1, instanceId2].filter(Boolean);
+    if (instanceIds.length === 0 && !user?.id_cliente) return;
     
-    if (instanceIds.length === 0) return;
+    console.log('[REALTIME] Configurando subscription para:', user?.id_cliente ? `cliente ${user.id_cliente}` : `instâncias ${instanceIds}`);
     
-    console.log('[REALTIME] Configurando subscription para instâncias:', instanceIds);
-    
-    // Importar e configurar subscription
-    import('@/services/messageService').then(({ setupMessagesSubscription, removeMessagesSubscription }) => {
-      console.log('[REALTIME] Serviço de mensagens importado com sucesso');
-      
-      const subscription = setupMessagesSubscription(
-        instanceIds,
-        (newMsg) => {
-          console.log('[REALTIME] Nova mensagem recebida:', newMsg);
-          
-          // Função auxiliar para processar novas mensagens com deduplicação melhorada
-          const processNewMessage = (newMsg: any) => {
-            // Garantir que a mensagem está no formato correto
-            const conversation: Conversation = {
-              ...newMsg,
-              // Garantir campos obrigatórios
-              id: newMsg.id || `temp-${Date.now()}`,
-              user_id: newMsg.user_id || user?.id || '',
-              conversa_id: newMsg.conversa_id || '',
-              mensagem: newMsg.mensagem || '',
-              timestamp: newMsg.timestamp || newMsg.created_at || new Date().toISOString(),
-              tipo: newMsg.tipo !== undefined ? newMsg.tipo : false,
-              telefone_id: newMsg.telefone_id || '',
-              created_at: newMsg.created_at || new Date().toISOString()
-            };
-            
-            // Verificar se é uma mensagem que acabamos de enviar
-            const messageContent = conversation.mensagem;
-            const phoneId = conversation.telefone_id;
-            const recentlySentArray = Array.from(recentlySentMessages);
-            
-            const isRecentlySent = recentlySentArray.some(key => {
-              return key.includes(phoneId) && key.includes(messageContent);
-            });
-            
-            if (isRecentlySent && conversation.tipo === true) {
-              console.log('[REALTIME] Ignorando mensagem recentemente enviada');
-              return; // Ignorar mensagem recentemente enviada
-            }
-            
-            // Verificar se é uma nova mensagem do contato atual
-            const normalizedMsgPhone = normalizePhone(conversation.telefone_id);
-            const isFromCurrentContact = selectedContact && (
-              normalizedMsgPhone === selectedContact || 
-              conversation.telefone_id === selectedContact
-            );
-            
-            // Se for uma nova mensagem recebida (não enviada) do contato atual, marcar como nova
-            if (isFromCurrentContact && !conversation.tipo) {
-              setHasNewMessages(true);
-              console.log('[REALTIME] Nova mensagem recebida do contato atual');
-            }
-            
-            // Atualiza a lista de conversas com deduplicação robusta
-            setConversations(prev => {
-              // Verificar se a mensagem já existe (para UPDATEs)
-              const existingIndex = prev.findIndex(m => m.id === conversation.id);
-              
-              if (existingIndex !== -1) {
-                // Se a mensagem já existe, atualizar ela (caso de UPDATE)
-                console.log('[REALTIME] Atualizando mensagem existente:', conversation.id);
-                const newList = [...prev];
-                newList[existingIndex] = conversation;
-                
-                // Atualizar lista de contatos
-                const phoneIdNormalized = normalizePhone(conversation.telefone_id);
-                setTimeout(async () => {
-                  await buildContacts(newList);
-                }, 100);
-                
-                return newList;
-              }
-              
-              // Verificar duplicação por conteúdo e timestamp (para INSERTs)
-              const hasRecentDuplicate = prev.some(m => 
-                m.mensagem === conversation.mensagem &&
-                m.telefone_id === conversation.telefone_id &&
-                m.tipo === conversation.tipo &&
-                Math.abs(new Date(m.created_at).getTime() - new Date(conversation.created_at).getTime()) < 2000
-              );
-              
-              if (hasRecentDuplicate) {
-                console.log('[REALTIME] Mensagem duplicada por conteúdo, ignorando');
-                return prev;
-              }
-              
-              console.log('[REALTIME] Adicionando nova mensagem à lista:', conversation);
-              const newList = [...prev, conversation];
-              
-              // Atualizar lista de contatos
-              const phoneIdNormalized = normalizePhone(conversation.telefone_id);
-              setTimeout(async () => {
-                await buildContacts(newList);
-              }, 100);
-              
-              return newList;
-            });
+    // Configurar subscription
+    const subscription = setupMessagesSubscription(
+      instanceIds,
+      (newMsg) => {
+        console.log('[REALTIME] Nova mensagem recebida:', newMsg);
+        
+        // Função auxiliar para processar novas mensagens com deduplicação melhorada
+        const processNewMessage = (msg: any) => {
+          // Garantir que a mensagem está no formato correto
+          const conversation: Conversation = {
+            ...msg,
+            id: msg.id || `temp-${Date.now()}`,
+            user_id: msg.user_id || user?.id || '',
+            conversa_id: msg.conversa_id || '',
+            mensagem: msg.mensagem || '',
+            timestamp: msg.timestamp || msg.created_at || new Date().toISOString(),
+            tipo: msg.tipo !== undefined ? msg.tipo : false,
+            telefone_id: msg.telefone_id || '',
+            created_at: msg.created_at || new Date().toISOString()
           };
           
-          // Processar a nova mensagem
-          processNewMessage(newMsg);
-        },
-        (error) => {
-          console.error('[REALTIME] Erro na subscription de mensagens:', error);
-        }
-      );
-      
-      if (subscription) {
-        console.log('[REALTIME] Subscription configurada com sucesso');
-      } else {
-        console.error('[REALTIME] Falha ao configurar subscription');
-      }
-      
-      // Cleanup da subscription ao desmontar
-      return () => {
-        if (subscription) {
-          console.log('[REALTIME] Removendo subscription');
-          removeMessagesSubscription(subscription);
-        }
-      };
-    }).catch(error => {
-      console.error('[REALTIME] Erro ao importar serviço de mensagens:', error);
-    });
+          // Verificar duplicação robusta
+          const messageContent = conversation.mensagem;
+          const phoneId = conversation.telefone_id;
+          
+          const isRecentlySent = Array.from(recentlySentMessages).some(key => {
+            return key.includes(phoneId) && key.includes(messageContent);
+          });
+          
+          if (isRecentlySent && conversation.tipo === true) {
+            return; 
+          }
+          
+          // Verificar se é uma nova mensagem do contato atual
+          const normalizedMsgPhone = normalizePhone(conversation.telefone_id);
+          const isFromCurrentContact = selectedContact && (
+            normalizedMsgPhone === selectedContact || 
+            conversation.telefone_id === selectedContact
+          );
+          
+          if (isFromCurrentContact && !conversation.tipo) {
+            setHasNewMessages(true);
+          }
+          
+          // Atualiza a lista de conversas
+          setConversations(prev => {
+            const existingIndex = prev.findIndex(m => m.id === conversation.id);
+            
+            if (existingIndex !== -1) {
+              const newList = [...prev];
+              newList[existingIndex] = conversation;
+              setTimeout(() => buildContacts(newList), 100);
+              return newList;
+            }
+            
+            const hasRecentDuplicate = prev.some(m => 
+              m.mensagem === conversation.mensagem &&
+              m.telefone_id === conversation.telefone_id &&
+              m.tipo === conversation.tipo &&
+              Math.abs(new Date(m.created_at).getTime() - new Date(conversation.created_at).getTime()) < 2000
+            );
+            
+            if (hasRecentDuplicate) return prev;
+            
+            const newList = [...prev, conversation];
+            setTimeout(() => buildContacts(newList), 100);
+            return newList;
+          });
+        };
+        
+        processNewMessage(newMsg);
+      },
+      (error) => console.error('[REALTIME] Erro:', error),
+      user?.id_cliente || undefined
+    );
     
-  }, [instanceId1, instanceId2, user?.id, selectedContact, recentlySentMessages]);
+    return () => {
+      if (subscription) {
+        removeMessagesSubscription(subscription);
+      }
+    };
+  }, [instanceId1, instanceId2, user?.id, user?.id_cliente, selectedContact, recentlySentMessages, buildContacts]);
 
   // Função para enviar mensagem
   const handleSendMessage = async () => {
