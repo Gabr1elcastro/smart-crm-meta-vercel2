@@ -16,6 +16,7 @@ interface MessageReceivedData {
   instanceId?: string;
   timestamp?: string;
   fromMe?: boolean; // Indica se a mensagem foi enviada pelo próprio sistema
+  name?: string;    // Nome do lead (opcional)
 }
 
 /**
@@ -150,7 +151,7 @@ export async function processReceivedMessage(data: MessageReceivedData): Promise
         .from('leads')
         .insert({
           telefone: normalizedPhone,
-          nome: `Contato ${normalizedPhone.slice(-4)}`,
+          nome: data.name || `Contato ${normalizedPhone.slice(-4)}`,
           id_cliente: idCliente,
           status_conversa: 'em_atendimento',
           status: 'Leads',

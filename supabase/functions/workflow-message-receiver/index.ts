@@ -22,6 +22,8 @@ interface IncomingPayload {
   id_cliente: number;
   fromMe?: boolean; // Indica se a mensagem foi enviada pelo próprio sistema
   from_me?: boolean; // Alternativa (snake_case)
+  name?: string;     // Nome do lead enviado pelo n8n/Meta
+  nomeLead?: string; // Alternativa de nome enviado pelo n8n/Meta
 }
 
 interface WorkflowNode {
@@ -177,7 +179,7 @@ async function upsertExecution(
   return data as WorkflowExecution;
 }
 
-async function getLeadData(phone: string, id_cliente: number): Promise<Record<string, any>> {
+async function getLeadData(phone: string, id_cliente: number, defaultName?: string): Promise<Record<string, any>> {
   const numero = phone.replace(/\D/g, '');
   const { data } = await supabase
     .from('leads')
@@ -185,7 +187,7 @@ async function getLeadData(phone: string, id_cliente: number): Promise<Record<st
     .eq('id_cliente', id_cliente)
     .or(`telefone.eq.${numero},telefone.eq.+${numero}`)
     .maybeSingle();
-  return data || { id_cliente, telefone: numero };
+  return data || { id_cliente, telefone: numero, nome: defaultName || `Contato ${numero.slice(-4)}` };
 }
 
 function parseNodes(raw: WorkflowNode[] | string): WorkflowNode[] {
@@ -1208,7 +1210,7 @@ async function handleRequest(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 });
   }
 
-  const { phone, message, id_cliente, fromMe, from_me } = body;
+  const { phone, message, id_cliente, fromMe, from_me, name, nomeLead } = body;
   if (!phone || !id_cliente) {
     return new Response(JSON.stringify({ error: 'Missing phone or id_cliente' }), { status: 400 });
   }
@@ -1332,7 +1334,7 @@ async function handleRequest(req: Request): Promise<Response> {
         return;
       }
 
-      const leadData = await getLeadData(phone, id_cliente);
+      const leadData = await getLeadData(phone, id_cliente, name || nomeLead);
       const activeWorkflow = await getActiveWorkflow(id_cliente);
 
       let isTriggerMatch = false;

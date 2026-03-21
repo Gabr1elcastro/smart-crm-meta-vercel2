@@ -1195,11 +1195,11 @@ export async function fetchMessagesWithPagination(
       .from('agente_conversacional_whatsapp')
       .select('*');
 
-    // Priorizar id_cliente se fornecido, senão usar instance_ids
-    if (idCliente) {
-      query = query.eq('id_cliente', idCliente);
-    } else if (instanceIds && instanceIds.length > 0) {
+    // Priorizar instanceIds se fornecidos (mais estável para o frontend)
+    if (instanceIds && instanceIds.length > 0) {
       query = query.in('instance_id', instanceIds);
+    } else if (idCliente) {
+      query = query.eq('id_cliente', idCliente);
     } else {
       // Se nenhum filtro for fornecido, retornar vazio
       return { messages: [], hasMore: false, totalCount: 0 };
@@ -1255,11 +1255,11 @@ export async function fetchRecentMessages(
       .from('agente_conversacional_whatsapp')
       .select('*');
 
-    // Priorizar id_cliente se fornecido
-    if (idCliente) {
-      query = query.eq('id_cliente', idCliente);
-    } else if (instanceIds && instanceIds.length > 0) {
+    // Priorizar instanceIds se fornecidos
+    if (instanceIds && instanceIds.length > 0) {
       query = query.in('instance_id', instanceIds);
+    } else if (idCliente) {
+      query = query.eq('id_cliente', idCliente);
     } else {
       return [];
     }
@@ -1297,9 +1297,14 @@ export function setupMessagesSubscription(
       : `messages_${instanceIds.join('_')}_${Date.now()}`;
     
     // Configurar filtro decido pelo id_cliente ou instance_ids
-    const filterValue = idCliente 
-      ? `id_cliente=eq.${idCliente}`
-      : `instance_id=in.(${instanceIds.map(id => `"${id}"`).join(',')})`;
+    // Nota: Filtros no Realtime do Supabase têm sintaxe específica
+    const filterValue = (instanceIds && instanceIds.length > 0)
+      ? `instance_id=in.(${instanceIds.map(id => `"${id}"`).join(',')})`
+      : idCliente 
+        ? `id_cliente=eq.${idCliente}`
+        : '';
+
+    if (!filterValue) return null;
 
     const subscription = supabase
       .channel(channelName)

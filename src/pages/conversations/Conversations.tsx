@@ -275,9 +275,13 @@ export const Conversations = () => {
         if (info?.instance_name_2) {
           setInstanceName2(info.instance_name_2);
         }
-        console.log('[CONVERSAS] instance_id encontrados:', { 
+        if (info?.sender_number) {
+          setSenderNumber(info.sender_number);
+        }
+        console.log('[CONVERSAS] IDs de instância encontrados:', { 
           instance_id: info?.instance_id, 
           instance_id_2: info?.instance_id_2, 
+          sender_number: info?.sender_number,
           instance_name: info?.instance_name, 
           instance_name_2: info?.instance_name_2 
         });
@@ -348,6 +352,7 @@ export const Conversations = () => {
   // 1. Buscar instance_id e client_id do usuário - SEMPRE pelo id_cliente do contexto
   const [instanceId1, setInstanceId1] = useState<string | null>(null);
   const [instanceId2, setInstanceId2] = useState<string | null>(null);
+  const [senderNumber, setSenderNumber] = useState<string | null>(null);
   const [instanceName1, setInstanceName1] = useState<string | null>(null);
   const [instanceName2, setInstanceName2] = useState<string | null>(null);
 
@@ -509,21 +514,18 @@ export const Conversations = () => {
     if (showLoading) setLoading(true);
 
     try {
-      const ids = [instanceId1, instanceId2].filter(Boolean);
-      // Buscar mensagens usando id_cliente (unificação total) ou fallback para instance_ids
-      let query = supabase
-        .from('agente_conversacional_whatsapp')
-        .select('*');
-
-      if (user.id_cliente) {
-        query = query.eq('id_cliente', user.id_cliente);
-      } else if (ids.length > 0) {
-        query = query.in('instance_id', ids);
-      } else {
+      const ids = [instanceId1, instanceId2, senderNumber].filter(Boolean) as string[];
+      
+      if (ids.length === 0) {
         setConversations([]);
         if (showLoading) setLoading(false);
         return;
       }
+
+      let query = supabase
+        .from('agente_conversacional_whatsapp')
+        .select('*')
+        .in('instance_id', ids);
 
       const { data, error } = await query.order('created_at', { ascending: false });
 
@@ -578,11 +580,11 @@ export const Conversations = () => {
     if (!user?.id_cliente && !instanceId1 && !instanceId2) return;
     
     // Cache para evitar processar a mesma mensagem múltiplas vezes
-    const instanceIds = [instanceId1, instanceId2].filter(Boolean) as string[];
+    const instanceIds = [instanceId1, instanceId2, senderNumber].filter(Boolean) as string[];
     
-    if (instanceIds.length === 0 && !user?.id_cliente) return;
+    if (instanceIds.length === 0) return;
     
-    console.log('[REALTIME] Configurando subscription para:', user?.id_cliente ? `cliente ${user.id_cliente}` : `instâncias ${instanceIds}`);
+    console.log('[REALTIME] Configurando subscription para instâncias:', instanceIds);
     
     // Configurar subscription
     const subscription = setupMessagesSubscription(
