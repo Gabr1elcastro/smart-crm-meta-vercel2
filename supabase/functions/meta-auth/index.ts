@@ -51,7 +51,9 @@ serve(async (req) => {
     const longTokenData = await longTokenResp.json();
     console.log("Long token response:", JSON.stringify(longTokenData));
 
-    const accessToken = longTokenData.access_token ?? shortToken;
+    const rawAccessToken = longTokenData.access_token ?? shortToken;
+    // Normaliza token para evitar salvar com \r\n no final (causa 401 no envio).
+    const accessToken = String(rawAccessToken).replace(/[\r\n]+$/g, "").trim();
     const expiresIn = longTokenData.expires_in ?? 3600;
     const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
 
@@ -71,7 +73,30 @@ serve(async (req) => {
 
     console.log("finalPhoneNumberId:", finalPhoneNumberId);
 
-    // 4. Salvar token em meta_connections
+    // 4. Validar token para o número antes de salvar em meta_connections.
+    // Evita persistir token inválido/inconsistente para envio.
+    if (finalPhoneNumberId) {
+      const validationResp = await fetch(
+        `https://graph.facebook.com/v21.0/${finalPhoneNumberId}?fields=id&access_token=${accessToken}`
+      );
+      const validationData = await validationResp.json();
+      if (!validationResp.ok || validationData?.error) {
+        console.error("❌ [AUTH] Token inválido para phone_number_id", {
+          status: validationResp.status,
+          phone_number_id: finalPhoneNumberId,
+          detail: validationData,
+        });
+        return new Response(
+          JSON.stringify({
+            error: "Token inválido para o número conectado",
+            detail: validationData,
+          }),
+          { status: 400, headers: corsHeaders }
+        );
+      }
+    }
+
+    // 5. Salvar token em meta_connections
     console.log("Salvando em meta_connections para id_cliente:", id_cliente);
     const { error: connError } = await supabase.from("meta_connections").upsert({
       id_cliente,
@@ -88,7 +113,7 @@ serve(async (req) => {
       console.log("meta_connections salvo com sucesso");
     }
 
-    // 5. Salvar phone_number_id em wa_numbers
+    // 6. Salvar phone_number_id em wa_numbers
     if (finalPhoneNumberId) {
       const phoneResp = await fetch(
         `https://graph.facebook.com/v21.0/${finalPhoneNumberId}?fields=display_phone_number&access_token=${accessToken}`
@@ -109,7 +134,7 @@ serve(async (req) => {
       }
     }
 
-    // 6. Inscrever webhook no número de telefone (CRÍTICO para receber mensagens)
+    // 7. Inscrever webhook no número de telefone (CRÍTICO para receber mensagens)
     if (finalPhoneNumberId && accessToken && waba_id) {
       try {
         const webhookUrl = `${SUPABASE_URL.replace('/rest/v1', '')}/functions/v1/meta-webhook`;

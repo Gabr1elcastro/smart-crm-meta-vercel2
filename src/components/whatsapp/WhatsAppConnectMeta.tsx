@@ -117,8 +117,9 @@ export default function WhatsAppConnectMeta({ email }: WhatsAppConnectMetaProps)
 
         const code = response.authResponse.code;
 
-        const waitForWabaId = (attempts: number) => {
-          if (waba_id || attempts <= 0) {
+        const waitForEmbeddedIds = (attempts: number) => {
+          // Alguns fluxos retornam phone_number_id antes de waba_id; não bloquear auth por isso.
+          if (waba_id || phone_number_id || attempts <= 0) {
             supabase.functions
               .invoke("meta-auth", {
                 body: { code, waba_id, phone_number_id, id_cliente: idCliente },
@@ -147,11 +148,11 @@ export default function WhatsAppConnectMeta({ email }: WhatsAppConnectMetaProps)
                 }
               });
           } else {
-            setTimeout(() => waitForWabaId(attempts - 1), 200);
+            setTimeout(() => waitForEmbeddedIds(attempts - 1), 200);
           }
         };
 
-        waitForWabaId(10);
+        waitForEmbeddedIds(10);
       },
       {
         config_id: "1160333859508239",

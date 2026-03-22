@@ -540,6 +540,16 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
         to: normalizedMetaTo,
         response: metaErrorText,
       });
+      // Se token/permissão invalida, força reauth para evitar falso-positivo de conexão.
+      if (clienteId && (metaResponse.status === 401 || metaResponse.status === 403)) {
+        await supabase
+          .from("meta_connections")
+          .update({
+            needs_reauth: true,
+            refresh_error: `meta_send_${metaResponse.status}`,
+          })
+          .eq("id_cliente", clienteId);
+      }
       // Se falhou, continuar para Evolution/UAZAPI como fallback
     }
   }
