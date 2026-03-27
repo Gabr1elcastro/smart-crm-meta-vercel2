@@ -1,18 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Credentials must come from environment variables. Do NOT hardcode secrets.
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error('Missing Supabase credentials: set SUPABASE_URL and SUPABASE_KEY (or VITE_SUPABASE_* variants)');
-}
+// Hardcoded credentials for direct testing
+// These are the same as in src/test-supabase.js
+const supabaseUrl = 'https://ltdkdeqxcgtuncgzsowt.supabase.co';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx0ZGtkZXF4Y2d0dW5jZ3pzb3d0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTcwNjYzMjk2MCwiZXhwIjoyMDIyMjA4OTYwfQ.Ry_xGgHVZPKGQOJOBNB4E_LWBGQkWOYxgXWNXHqXEtE';
 
 console.log('Testing with direct Supabase client...');
 console.log('URL:', supabaseUrl);
-console.log('Key:', supabaseKey ? 'Present (service role or anon)' : 'Missing');
+console.log('Key:', supabaseKey ? 'Present (service role)' : 'Missing');
 
-// Create a direct client with the supabase key
+// Create a direct client with the service role key
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 async function runQueries() {

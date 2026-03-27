@@ -9,7 +9,7 @@ import { format, isToday, isYesterday, addDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Search, Send, Paperclip, MoreVertical, Bot, User, CheckCircle, XCircle, RefreshCw, Mic, TrendingUp, Archive, PlayCircle, MessageSquare, GitBranch, Repeat, Tag, User as UserIcon, X, Info as InfoIcon, BellRing, DollarSign, Pencil, RotateCcw, Download } from "lucide-react";
+import { Search, Send, Paperclip, MoreVertical, Bot, User, CheckCircle, XCircle, RefreshCw, Mic, TrendingUp, Archive, PlayCircle, MessageSquare, MessageCircle, Instagram, GitBranch, Repeat, Tag, User as UserIcon, X, Info as InfoIcon, BellRing, DollarSign, Pencil, RotateCcw, Download } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -676,8 +676,48 @@ export const Conversations = () => {
     setIsSending(true);
 
     try {
+      const messageText = message.trim();
       // Pega o telefone do contato escolhido
       const contact = contacts.find(c => c.id === selectedContact || normalizePhone(c.telefone_id) === selectedContact);
+      const leadsToSearch = selectedDepartamento === 'all' ? leadsRaw : leads;
+      const leadContato = leadsToSearch.find(
+        (l) =>
+          String(l.instance_id) === String(contact?.instance_id) &&
+          normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact?.telefone_id || '')
+      ) || leadsToSearch.find(
+        (l) => normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact?.telefone_id || '')
+      );
+      const canal = String(leadContato?.canal || '').toLowerCase().trim();
+
+      if (canal === 'instagram' || canal === 'intagram') {
+        if (!user?.id_cliente) {
+          toast.error('Erro: cliente não identificado');
+          setIsSending(false);
+          return;
+        }
+
+        await sendInstagramViaWebhook({
+          mensagem: messageText,
+          tipo_mensagem: 'texto',
+        });
+
+        setMessage('');
+        if (selectedContact) {
+          setMessageDrafts(prev => {
+            const newDrafts = { ...prev };
+            delete newDrafts[selectedContact];
+            return newDrafts;
+          });
+        }
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        fetchConversations(false);
+        toast.success('Mensagem enviada com sucesso!');
+        return;
+      }
+
       // Se não encontrar, tenta buscar nos leads
       let telefoneEnvio = '';
       if (contact?.telefone_id) {
@@ -695,7 +735,7 @@ export const Conversations = () => {
       }
 
       // Envio padrão Evolution (verificado em messageService.ts)
-      await sendMessage(telefoneEnvio, message);
+      await sendMessage(telefoneEnvio, messageText);
 
       // Limpar o campo de texto
       setMessage('');
@@ -2072,6 +2112,68 @@ Erro original: ${error.message}`);
   };
 
   // Função para enviar mensagem de imagem
+  const getSelectedContactCanal = (): 'whatsapp' | 'instagram' | 'unknown' => {
+    if (!selectedContact) return 'unknown';
+    const contact = contacts.find(c => c.id === selectedContact || normalizePhone(c.telefone_id) === selectedContact);
+    const leadsToSearch = selectedDepartamento === 'all' ? leadsRaw : leads;
+    const leadContato = leadsToSearch.find(
+      (l) =>
+        String(l.instance_id) === String(contact?.instance_id) &&
+        normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact?.telefone_id || '')
+    ) || leadsToSearch.find(
+      (l) => normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact?.telefone_id || '')
+    );
+
+    const canal = String(leadContato?.canal || '').toLowerCase().trim();
+    if (canal === 'whatsapp') return 'whatsapp';
+    if (canal === 'instagram' || canal === 'intagram') return 'instagram';
+    return 'unknown';
+  };
+
+  const sendInstagramViaWebhook = async (params: {
+    mensagem: string;
+    tipo_mensagem?: string;
+    url_arquivo?: string;
+    nome_arquivo?: string;
+  }) => {
+    if (!selectedContact) throw new Error('Nenhum contato selecionado');
+    if (!user?.id_cliente) throw new Error('Cliente não identificado');
+
+    const contact = contacts.find(c => c.id === selectedContact || normalizePhone(c.telefone_id) === selectedContact);
+
+    // Tenta reaproveitar dados da conversa existente para manter payload consistente
+    const convo = conversations.find(
+      (c) =>
+        c.conversa_id === selectedContact ||
+        c.telefone_id === contact?.telefone_id ||
+        normalizePhone(c.telefone_id) === normalizePhone(contact?.telefone_id || '')
+    );
+
+    const payload: any = {
+      cliente_id: user.id_cliente,
+      mensagem: params.mensagem,
+      id_conversa: convo?.conversa_id || selectedContact,
+      id_instagram_lead: convo?.telefone || contact?.telefone_id || selectedContact,
+      nome_lead: contact?.name || 'Contato Instagram',
+    };
+
+    // Campos extras para suportar mídia (se o webhook já estiver preparado)
+    if (params.tipo_mensagem) payload.tipo_mensagem = params.tipo_mensagem;
+    if (params.url_arquivo) payload.url_arquivo = params.url_arquivo;
+    if (params.nome_arquivo) payload.nome_arquivo = params.nome_arquivo;
+
+    const response = await fetch('https://webhook.dev.usesmartcrm.com/webhook/envio_ig', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erro HTTP no envio Instagram: ${response.status}`);
+    }
+  };
+
+  // Função para enviar mensagem de imagem
   const handleSendImage = async (imageFile: File) => {
     if (!selectedContact) {
       toast.error('Nenhum contato selecionado');
@@ -2085,6 +2187,46 @@ Erro original: ${error.message}`);
     }
 
     console.log('📷 Iniciando envio de imagem para:', contact.telefone_id);
+
+    const canal = getSelectedContactCanal();
+    if (canal === 'instagram') {
+      const loadingToast = toast.loading(
+        <div className="flex items-center gap-2">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+          <span>Enviando imagem...</span>
+        </div>
+      );
+
+      try {
+        const imageUrl = await uploadImageToStorage(imageFile);
+        await sendInstagramViaWebhook({
+          mensagem: imageUrl,
+          tipo_mensagem: 'imagem',
+          url_arquivo: imageUrl,
+          nome_arquivo: imageFile.name,
+        });
+
+        toast.dismiss(loadingToast);
+        toast.success(
+          <div className="flex items-center gap-2">
+            <span>📷</span>
+            <span>Imagem enviada com sucesso!</span>
+          </div>
+        );
+
+        fetchConversations(false);
+      } catch (error) {
+        toast.dismiss(loadingToast);
+        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+        toast.error(
+          <div className="flex items-center gap-2">
+            <span>❌</span>
+            <span>Erro ao enviar imagem: {errorMessage}</span>
+          </div>
+        );
+      }
+      return;
+    }
 
     // Toast de loading
     const loadingToast = toast.loading(
@@ -2149,6 +2291,45 @@ Erro original: ${error.message}`);
     }
 
     console.log('🎤 Iniciando envio de áudio para:', contact.telefone_id);
+
+    const canal = getSelectedContactCanal();
+    if (canal === 'instagram') {
+      const loadingToast = toast.loading(
+        <div className="flex items-center gap-2">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+          <span>Enviando áudio...</span>
+        </div>
+      );
+
+      try {
+        const audioUrl = await uploadAudioToStorage(audioBlob);
+        await sendInstagramViaWebhook({
+          mensagem: audioUrl,
+          tipo_mensagem: 'audio',
+          url_arquivo: audioUrl,
+        });
+
+        toast.dismiss(loadingToast);
+        toast.success(
+          <div className="flex items-center gap-2">
+            <span>🎤</span>
+            <span>Áudio enviado com sucesso!</span>
+          </div>
+        );
+
+        fetchConversations(false);
+      } catch (error) {
+        toast.dismiss(loadingToast);
+        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+        toast.error(
+          <div className="flex items-center gap-2">
+            <span>❌</span>
+            <span>Erro ao enviar áudio: {errorMessage}</span>
+          </div>
+        );
+      }
+      return;
+    }
 
     // Toast de loading
     const loadingToast = toast.loading(
@@ -3355,6 +3536,46 @@ Erro original: ${error.message}`);
 
     console.log('📄 Iniciando envio de documento para:', contact.telefone_id);
 
+    const canal = getSelectedContactCanal();
+    if (canal === 'instagram') {
+      const loadingToast = toast.loading(
+        <div className="flex items-center gap-2">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+          <span>Enviando documento...</span>
+        </div>
+      );
+
+      try {
+        const documentUrl = await uploadDocumentToStorage(documentFile);
+        await sendInstagramViaWebhook({
+          mensagem: documentUrl,
+          tipo_mensagem: 'documento',
+          url_arquivo: documentUrl,
+          nome_arquivo: documentFile.name,
+        });
+
+        toast.dismiss(loadingToast);
+        toast.success(
+          <div className="flex items-center gap-2">
+            <span>📄</span>
+            <span>Documento enviado com sucesso!</span>
+          </div>
+        );
+
+        fetchConversations(false);
+      } catch (error) {
+        toast.dismiss(loadingToast);
+        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+        toast.error(
+          <div className="flex items-center gap-2">
+            <span>❌</span>
+            <span>Erro ao enviar documento: {errorMessage}</span>
+          </div>
+        );
+      }
+      return;
+    }
+
     // Toast de loading
     const loadingToast = toast.loading(
       <div className="flex items-center gap-2">
@@ -3414,6 +3635,47 @@ Erro original: ${error.message}`);
     const contact = contacts.find(c => c.id === selectedContact);
     if (!contact?.telefone_id) {
       toast.error('Erro: telefone não encontrado');
+      return;
+    }
+
+    const canal = getSelectedContactCanal();
+    if (canal === 'instagram') {
+      const loadingToast = toast.loading(
+        <div className="flex items-center gap-2">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+          <span>Enviando vídeo...</span>
+        </div>
+      );
+
+      try {
+        const videoUrl = await uploadImageToStorage(videoFile);
+        await sendInstagramViaWebhook({
+          mensagem: videoUrl,
+          tipo_mensagem: 'video',
+          url_arquivo: videoUrl,
+          nome_arquivo: videoFile.name,
+        });
+
+        toast.dismiss(loadingToast);
+        toast.success(
+          <div className="flex items-center gap-2">
+            <span>🎥</span>
+            <span>Vídeo enviado com sucesso!</span>
+          </div>
+        );
+
+        setShowVideoUploader(false);
+        fetchConversations(false);
+      } catch (error) {
+        toast.dismiss(loadingToast);
+        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+        toast.error(
+          <div className="flex items-center gap-2">
+            <span>❌</span>
+            <span>Erro ao enviar vídeo: {errorMessage}</span>
+          </div>
+        );
+      }
       return;
     }
 
@@ -5155,6 +5417,9 @@ Erro original: ${error.message}`);
                   String(l.instance_id) === String(contact.instance_id) &&
                   normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact.telefone_id)
                 ) || leadsToSearch.find(l => normalizePhoneOnlyNumber(l.telefone) === normalizePhoneOnlyNumber(contact.telefone_id));
+                const leadCanal = String(lead?.canal || '').toLowerCase().trim();
+                const isWhatsappCanal = leadCanal === 'whatsapp';
+                const isInstagramCanal = leadCanal === 'instagram' || leadCanal === 'intagram';
                 
                 // Debug: Log para verificar se o lead foi encontrado e tem score
                 if (contact.name === 'Wesley Pontes' || contact.name === 'Smart chatbotbot') {
@@ -5216,6 +5481,22 @@ Erro original: ${error.message}`);
                           </svg>
                         )}
                       </div>
+                    )}
+                    {(isWhatsappCanal || isInstagramCanal) && (
+                      <span
+                        className={`inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full ${
+                          isWhatsappCanal
+                            ? 'bg-green-100 text-green-600'
+                            : 'bg-pink-100 text-pink-600'
+                        }`}
+                        title={isWhatsappCanal ? 'Canal: WhatsApp' : 'Canal: Instagram'}
+                      >
+                        {isWhatsappCanal ? (
+                          <MessageCircle className="h-4 w-4" />
+                        ) : (
+                          <Instagram className="h-4 w-4" />
+                        )}
+                      </span>
                     )}
                     <Avatar>
                       <AvatarImage src={contact.avatar} />

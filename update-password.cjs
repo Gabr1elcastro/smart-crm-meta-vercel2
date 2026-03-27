@@ -1,17 +1,12 @@
 const { createClient } = require('@supabase/supabase-js');
 
-// Configuração via variáveis de ambiente (sempre evitar hardcode)
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// Configuração via variáveis de ambiente
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://ltdkdeqxcgtuncgzsowt.supabase.co';
+const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx0ZGtkZXF4Y2d0dW5jZ3pzb3d0Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczNzA4NzYxNiwiZXhwIjoyMDUyNjYzNjE2fQ.RKMW8QZohViES2Y2agpCC5OYv8owBCPnI3pgxppIeVs';
 
-// Dados da alteração devem ser recebidos dinamicamente para não vazar dados sensíveis em código
-const userId = process.argv[2];
-const newPassword = process.argv[3];
-
-if (!userId || !newPassword) {
-  console.error('Uso: node update-password.cjs <userId> <newPassword>');
-  process.exit(1);
-}
+// Dados da alteração
+const userId = 'fc7b5761-9838-40a5-a339-1159c418af34';
+const newPassword = 'Getracker2025*';
 
 (async () => {
   try {

@@ -2,6 +2,7 @@ import React from "react";
 import NovoDashboard from "@/components/dashboard/novoDashboard";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
+import { useUserType } from "@/hooks/useUserType";
 
 // Código antigo comentado - usando NovoDashboard agora.
 /*
@@ -60,6 +61,7 @@ const initialFunnelData = [
 */
 
 export default function Dashboard() {
+  const { trial, plano_plus } = useUserType();
   /*
   // Alterar o padrão para últimos 30 dias
   const [dateRange, setDateRange] = useState<DateRange>({
@@ -881,11 +883,13 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <NovoDashboard />
-      <div className="w-full px-4 sm:px-6 lg:px-8 pb-10">
-        <Link to="/relatorios-gerenciais">
-          <Button variant="outline">Relatórios Gerenciais</Button>
-        </Link>
-      </div>
+      {!trial && !plano_plus && (
+        <div className="w-full px-4 sm:px-6 lg:px-8 pb-10">
+          <Link to="/relatorios-gerenciais">
+            <Button variant="outline">Relatórios Gerenciais</Button>
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

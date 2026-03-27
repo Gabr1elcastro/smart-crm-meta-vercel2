@@ -77,13 +77,8 @@ interface SidebarProps {
 }
 
 const trialHiddenRoutes = new Set([
-  "/conversations",
-  "/conversations-instagram",
+  "/relatorios",
   "/grupos-disparo",
-  "/disparo-massa",
-  "/chatbots",
-  "/etiquetas",
-  "/departamentos",
   "/followup",
   "/arquivos-ia",
   "/meus-chips",
@@ -180,9 +175,9 @@ export default function Sidebar({ isPlansPage = false }: SidebarProps) {
         return atendenteAllowedRoutes.has(path);
       }
 
-      // Workflows só aparece no plano Pro (não Trial, nem CRM)
+      // Workflows aparece para quem tem plano Pro
       if (path === "/workflows") {
-        return !isTrial && plano_pro === true;
+        return plano_pro === true;
       }
 
       // Trial mantém lógica atual
@@ -241,14 +236,14 @@ export default function Sidebar({ isPlansPage = false }: SidebarProps) {
             end={!isAtendente}
             show={isAtendente ? showNav("/dashboard-personal") : showNav("/")}
           />
-          <NavItem to="/relatorios" icon={BarChart3} label="CRM" show={showNav("/relatorios")} />
+          <NavItem to="/relatorios" icon={BarChart3} label="CRM" show={showNav("/relatorios") && !plano_plus} />
 
           <NavItem to="/conversations" icon={MessageSquare} label="Conversas" show={showNav("/conversations")} />
           <NavItem
             to="/conversations-instagram"
             icon={Instagram}
             label="Conversas Instagram"
-            show={showNav("/conversations-instagram")}
+            show={showNav("/conversations-instagram") && !plano_plus}
           />
           <NavItem to="/etiquetas" icon={Tag} label="Etiquetas" show={showNav("/etiquetas")} />
 

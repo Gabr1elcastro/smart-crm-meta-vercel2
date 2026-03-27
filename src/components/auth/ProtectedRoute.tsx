@@ -22,7 +22,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   requireProPlan = false
 }) => {
   const { user, loading: authLoading } = useAuth();
-  const { userType, loading: userTypeLoading, canAccessSettings, canAccessMeusChips, plano_crm, plano_pro, trial } = useUserType();
+  const { userType, loading: userTypeLoading, canAccessSettings, canAccessMeusChips, plano_crm, plano_pro } = useUserType();
   const location = useLocation();
 
   // Se ainda está carregando, mostrar loading
@@ -62,8 +62,8 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return <Navigate to="/" replace />;
   }
 
-  // Se a rota requer plano Pro (ex.: Workflows – não Trial, nem apenas CRM)
-  if (requireProPlan && (trial || !plano_pro)) {
+  // Se a rota requer plano Pro
+  if (requireProPlan && !plano_pro) {
     return <Navigate to="/" replace />;
   }
 

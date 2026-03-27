@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
+import { useUserType } from '@/hooks/useUserType';
 import { clientesService } from '@/services/clientesService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -463,6 +464,8 @@ export default function NovoDashboard() {
   const mostrarSecoesComentadas = false;
 
   const { user } = useAuth();
+  const { trial, plano_plus } = useUserType();
+  const hidePremiumDashboardSections = trial || plano_plus;
   const { loading, error, dailyMetrics, kpis, funil, canais, alertas, meta, metaValor, idCliente, dataHoraAtualizacaoRelatorio, reload } =
     useDashboardData(dateRange);
 
@@ -1021,34 +1024,36 @@ export default function NovoDashboard() {
         </CardContent>
       </Card>
 
-      {/* Linha de 4 Cards KPI (mock por enquanto) */}
-      <div className="grid grid-cols-2 gap-6">
-        <Card className="bg-white">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-2">
-              <div className="h-10 w-10 rounded-lg bg-purple-100 flex items-center justify-center">
-                <DollarSign className="h-5 w-5 text-purple-600" />
+      {/* Trial/Plus: ocultar cards de Receita e ROI */}
+      {!hidePremiumDashboardSections && (
+        <div className="grid grid-cols-2 gap-6">
+          <Card className="bg-white">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between mb-2">
+                <div className="h-10 w-10 rounded-lg bg-purple-100 flex items-center justify-center">
+                  <DollarSign className="h-5 w-5 text-purple-600" />
+                </div>
               </div>
-            </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-1">{formatCurrency(kpis.receita)}</h3>
-            <p className="text-sm text-gray-600 mb-1">Receita</p>
-            <p className="text-xs text-gray-500">Faturamento do período</p>
-          </CardContent>
-        </Card>
+              <h3 className="text-2xl font-bold text-gray-900 mb-1">{formatCurrency(kpis.receita)}</h3>
+              <p className="text-sm text-gray-600 mb-1">Receita</p>
+              <p className="text-xs text-gray-500">Faturamento do período</p>
+            </CardContent>
+          </Card>
 
-        <Card className="bg-white">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-2">
-              <div className="h-10 w-10 rounded-lg bg-purple-100 flex items-center justify-center">
-                <TrendingUp className="h-5 w-5 text-purple-600" />
+          <Card className="bg-white">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between mb-2">
+                <div className="h-10 w-10 rounded-lg bg-purple-100 flex items-center justify-center">
+                  <TrendingUp className="h-5 w-5 text-purple-600" />
+                </div>
               </div>
-            </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-1">{kpis.roi}%</h3>
-            <p className="text-sm text-gray-600 mb-1">ROI</p>
-            <p className="text-xs text-gray-500">Retorno sobre investimento</p>
-          </CardContent>
-        </Card>
-      </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-1">{kpis.roi}%</h3>
+              <p className="text-sm text-gray-600 mb-1">ROI</p>
+              <p className="text-xs text-gray-500">Retorno sobre investimento</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Grid: Insights + Funil */}
       <div className="grid grid-cols-2 gap-6">
@@ -1395,114 +1400,115 @@ export default function NovoDashboard() {
       </Card>
       )}
 
-      {/* Card de Meta */}
-      <Card className="bg-purple-50 border-purple-200">
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-start gap-4">
-              <div className="h-12 w-12 rounded-lg bg-purple-600 flex items-center justify-center flex-shrink-0">
-                <Target className="h-6 w-6 text-white" />
+      {/* Trial/Plus: ocultar card e modal de Meta */}
+      {!hidePremiumDashboardSections && (
+        <>
+          <Card className="bg-purple-50 border-purple-200">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-start gap-4">
+                  <div className="h-12 w-12 rounded-lg bg-purple-600 flex items-center justify-center flex-shrink-0">
+                    <Target className="h-6 w-6 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      Você está a {formatCurrency(metaCalculada?.faltante ?? meta.faltante)} de atingir sua meta!
+                    </h3>
+                    <p className="text-sm text-gray-700">
+                      {metaCalculada ? (
+                        <>
+                          Meta: {formatCurrency(metaCalculada.meta)} | Receita atual: {formatCurrency(kpis.receita)}
+                        </>
+                      ) : (
+                        <>
+                          Com base no seu ritmo atual, você deve alcançar a meta em <strong>{meta.diasRestantes} dias</strong>.
+                          Continue focando nos leads qualificados do WhatsApp.
+                        </>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  className="bg-purple-600 hover:bg-purple-700"
+                  onClick={() => setOpenModalMeta(true)}
+                >
+                  {metaCalculada ? 'Editar Meta' : 'Adicionar Meta'}
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
               </div>
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  Você está a {formatCurrency(metaCalculada?.faltante ?? meta.faltante)} de atingir sua meta!
-                </h3>
-                <p className="text-sm text-gray-700">
-                  {metaCalculada ? (
-                    <>
-                      Meta: {formatCurrency(metaCalculada.meta)} | Receita atual: {formatCurrency(kpis.receita)}
-                    </>
-                  ) : (
-                    <>
-                      Com base no seu ritmo atual, você deve alcançar a meta em <strong>{meta.diasRestantes} dias</strong>.
-                      Continue focando nos leads qualificados do WhatsApp.
-                    </>
-                  )}
-                </p>
-              </div>
-            </div>
-            <Button 
-              className="bg-purple-600 hover:bg-purple-700"
-              onClick={() => setOpenModalMeta(true)}
-            >
-              {metaCalculada ? 'Editar Meta' : 'Adicionar Meta'}
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
 
-      {/* Modal para inserir meta */}
-      <Dialog open={openModalMeta} onOpenChange={setOpenModalMeta}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Definir Meta</DialogTitle>
-            <DialogDescription>
-              Insira o valor da meta que deseja atingir. O sistema calculará automaticamente quanto falta para alcançá-la.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="meta">Valor da Meta (R$)</Label>
-              <Input
-                id="meta"
-                type="text"
-                placeholder="0,00"
-                value={valorMeta}
-                onChange={(e) => {
-                  // Permite apenas números, vírgula e ponto
-                  let value = e.target.value.replace(/[^\d,.]/g, '');
-                  // Garante apenas uma vírgula ou ponto
-                  const parts = value.split(/[,.]/);
-                  if (parts.length > 2) {
-                    value = parts[0] + ',' + parts.slice(1).join('');
-                  }
-                  setValorMeta(value);
-                }}
-                onBlur={(e) => {
-                  const numValue = parseCurrencyToNumber(e.target.value);
-                  if (!isNaN(numValue) && numValue > 0) {
-                    setValorMeta(new Intl.NumberFormat('pt-BR', {
-                      style: 'currency',
-                      currency: 'BRL',
-                    }).format(numValue));
-                  } else if (e.target.value.trim() === '') {
-                    setValorMeta('');
-                  }
-                }}
-              />
-            </div>
-            {valorMeta && !isNaN(parseCurrencyToNumber(valorMeta)) && parseCurrencyToNumber(valorMeta) > 0 && (
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-600">
-                  <strong>Receita atual:</strong> {formatCurrency(kpis.receita)}
-                </p>
-                <p className="text-sm text-gray-600 mt-1">
-                  <strong>Faltante:</strong>{' '}
-                  <span className="text-purple-600 font-semibold">
-                    {formatCurrency(Math.max(0, parseCurrencyToNumber(valorMeta) - kpis.receita))}
-                  </span>
-                </p>
+          <Dialog open={openModalMeta} onOpenChange={setOpenModalMeta}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Definir Meta</DialogTitle>
+                <DialogDescription>
+                  Insira o valor da meta que deseja atingir. O sistema calculará automaticamente quanto falta para alcançá-la.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="meta">Valor da Meta (R$)</Label>
+                  <Input
+                    id="meta"
+                    type="text"
+                    placeholder="0,00"
+                    value={valorMeta}
+                    onChange={(e) => {
+                      let value = e.target.value.replace(/[^\d,.]/g, '');
+                      const parts = value.split(/[,.]/);
+                      if (parts.length > 2) {
+                        value = parts[0] + ',' + parts.slice(1).join('');
+                      }
+                      setValorMeta(value);
+                    }}
+                    onBlur={(e) => {
+                      const numValue = parseCurrencyToNumber(e.target.value);
+                      if (!isNaN(numValue) && numValue > 0) {
+                        setValorMeta(new Intl.NumberFormat('pt-BR', {
+                          style: 'currency',
+                          currency: 'BRL',
+                        }).format(numValue));
+                      } else if (e.target.value.trim() === '') {
+                        setValorMeta('');
+                      }
+                    }}
+                  />
+                </div>
+                {valorMeta && !isNaN(parseCurrencyToNumber(valorMeta)) && parseCurrencyToNumber(valorMeta) > 0 && (
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <p className="text-sm text-gray-600">
+                      <strong>Receita atual:</strong> {formatCurrency(kpis.receita)}
+                    </p>
+                    <p className="text-sm text-gray-600 mt-1">
+                      <strong>Faltante:</strong>{' '}
+                      <span className="text-purple-600 font-semibold">
+                        {formatCurrency(Math.max(0, parseCurrencyToNumber(valorMeta) - kpis.receita))}
+                      </span>
+                    </p>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setOpenModalMeta(false);
-              setValorMeta('');
-            }}>
-              Cancelar
-            </Button>
-            <Button 
-              className="bg-purple-600 hover:bg-purple-700"
-              onClick={handleSalvarMeta}
-              disabled={!valorMeta || isNaN(parseCurrencyToNumber(valorMeta)) || parseCurrencyToNumber(valorMeta) <= 0 || !idCliente}
-            >
-              Salvar Meta
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => {
+                  setOpenModalMeta(false);
+                  setValorMeta('');
+                }}>
+                  Cancelar
+                </Button>
+                <Button
+                  className="bg-purple-600 hover:bg-purple-700"
+                  onClick={handleSalvarMeta}
+                  disabled={!valorMeta || isNaN(parseCurrencyToNumber(valorMeta)) || parseCurrencyToNumber(valorMeta) <= 0 || !idCliente}
+                >
+                  Salvar Meta
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </>
+      )}
     </div>
   );
 }
