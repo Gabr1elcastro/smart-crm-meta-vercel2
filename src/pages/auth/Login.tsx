@@ -81,18 +81,18 @@ export default function Login() {
     ? tema.logo_url 
     : "/lovable-uploads/14b51735-5bca-4815-8a9a-30f309cc5b38.png";
 
-  const logoClassName = hasTema && tema?.logo_url 
-    ? "h-24 max-w-full object-contain" 
-    : "h-12 max-w-full object-contain";
+  // Logo: altura confortável no card (~400px); largura limitada para logos horizontais
+  const logoClassName =
+    "mx-auto h-20 w-auto max-h-28 min-h-[4.5rem] max-w-[min(100%,18rem)] sm:h-24 sm:max-h-32 sm:max-w-[20rem] object-contain";
 
   return (
     <div className="flex items-center justify-center min-h-screen" style={loginStyles}>
       <Card className="w-[400px] shadow-lg">
         <CardHeader className="space-y-1 text-center">
-          <div className="flex items-center justify-center mb-4">
-            <img 
+          <div className="flex min-h-[5.5rem] items-center justify-center px-2 pb-2 pt-1 sm:min-h-[6.5rem]">
+            <img
               src={logoSrc}
-              alt="Logo" 
+              alt="Logo"
               className={logoClassName}
             />
           </div>

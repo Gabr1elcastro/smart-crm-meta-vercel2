@@ -9,12 +9,11 @@ import WhatsAppConnectUAZAPI from "@/components/whatsapp/WhatsAppConnectUAZAPI";
 import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
-import { Pencil, Save, X, UserRound, Plug, KeyRound, ArrowRight, Zap } from "lucide-react";
-import WhatsAppConnectMeta from "@/components/whatsapp/WhatsAppConnectMeta";
+import { Pencil, Save, X, UserRound, Plug, KeyRound, ArrowRight } from "lucide-react";
 
 export default function Settings() {
   const { user } = useAuth();
-  const [activeSection, setActiveSection] = useState<"profile" | "chips" | "meta">("profile");
+  const [activeSection, setActiveSection] = useState<"profile" | "chips">("profile");
 
   const [clientInfo, setClientInfo] = useState<ClienteInfo | null>(null);
   const [loadingClient, setLoadingClient] = useState(true);
@@ -179,15 +178,6 @@ export default function Settings() {
                   <Plug className="h-4 w-4" />
                   Chips Conectados
                 </Button>
-                <Button
-                  type="button"
-                  variant={activeSection === "meta" ? "default" : "outline"}
-                  className="justify-start gap-2"
-                  onClick={() => setActiveSection("meta")}
-                >
-                  <Zap className="h-4 w-4" />
-                  API Oficial
-                </Button>
               </div>
             </div>
 
@@ -340,18 +330,6 @@ export default function Settings() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <WhatsAppConnectUAZAPI email={user?.email} id={user?.id} />
-                  </CardContent>
-                </Card>
-              )}
-
-              {activeSection === "meta" && (
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-lg">API Oficial</CardTitle>
-                    <CardDescription>Conexão WhatsApp via API Oficial Meta</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <WhatsAppConnectMeta email={user?.email} id={user?.id} />
                   </CardContent>
                 </Card>
               )}

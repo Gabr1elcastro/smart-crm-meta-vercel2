@@ -520,8 +520,6 @@ export default function ConexoesPage() {
                .filter((conexao) => {
                  // Ocultar Google Agenda para Trial e plano CRM
                  if (conexao.id === 'google-agenda' && isTrial) return false;
-                 // Ocultar Instagram para Trial e plano CRM
-                 if (conexao.id === 'instagram' && isTrial) return false;
                  return true;
                })
                .map((conexao) => (

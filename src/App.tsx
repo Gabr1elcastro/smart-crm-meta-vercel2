@@ -52,7 +52,7 @@ const queryClient = new QueryClient();
 
 // Componente para redirecionar starter para /conversations
 const HomeRedirect = () => {
-  const { plano_starter, plano_crm, loading, isAtendente } = useUserType();
+  const { plano_starter, plano_crm, loading, isAtendente, trial } = useUserType();
 
   if (loading) {
     return (
@@ -70,9 +70,8 @@ const HomeRedirect = () => {
     return <Navigate to="/dashboard-personal" replace />;
   }
 
-  // Se tem plano starter E não tem acesso ao CRM (ou seja, não é trial), redirecionar para conversas
-  // Trial sempre tem acesso ao CRM, então mesmo com starter, pode acessar Dashboard
-  if (plano_starter && !plano_crm) {
+  // Starter sem CRM e sem Trial vai para conversas
+  if (plano_starter && !plano_crm && !trial) {
     return <Navigate to="/conversations" replace />;
   }
 

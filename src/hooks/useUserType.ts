@@ -47,13 +47,13 @@ export const useUserType = () => {
           const hasPro = adminData.plano_pro || false;
           const hasCrm = adminData.plano_crm || false;
           
-          setUserInfo({ 
+          setUserInfo({
             tipo_usuario: 'Admin',
             // ✅ NOVA LÓGICA: Trial tem acesso completo a todas as funcionalidades
             plano_agentes: adminData.plano_agentes || adminData.trial || false,
             plano_agentes_low: adminData.plano_agentes_low || adminData.trial || false,
-            // Trial sempre tem acesso ao CRM, mesmo com starter. Starter sem trial não tem acesso ao CRM
-            plano_crm: adminData.trial || ((hasCrm || hasPro) && !hasStarter) || false,
+            // Trial NÃO tem acesso ao CRM
+            plano_crm: ((hasCrm || hasPro) && !hasStarter) || false,
             plano_starter: hasStarter || adminData.trial || false,
             plano_plus: adminData.plano_plus || adminData.trial || false,
             plano_pro: hasPro || adminData.trial || false,
@@ -84,8 +84,8 @@ export const useUserType = () => {
             // Gestores inscritos herdam os planos do cliente
             plano_agentes: gestorData.plano_agentes || gestorData.trial || false,
             plano_agentes_low: gestorData.plano_agentes_low || false,
-            // Trial sempre tem acesso ao CRM, mesmo com starter. Starter sem trial não tem acesso ao CRM
-            plano_crm: gestorData.trial || ((hasCrm || hasPro) && !hasStarter) || false,
+            // Trial NÃO tem acesso ao CRM
+            plano_crm: ((hasCrm || hasPro) && !hasStarter) || false,
             plano_starter: hasStarter || gestorData.trial || false,
             plano_plus: gestorData.plano_plus || gestorData.trial || false,
             plano_pro: hasPro || gestorData.trial || false,

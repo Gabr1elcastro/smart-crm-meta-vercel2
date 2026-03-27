@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/auth";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertCircle, Wifi, WifiOff, CheckCircle } from "lucide-react";
 import { WebhookService } from "@/services/webhookService";
+import { useTemaLogin } from "@/hooks/useTemaLogin";
 
 // 🎯 Declaração de tipo para Facebook Pixel
 declare global {
@@ -27,6 +28,7 @@ export default function Signup() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const { signUp, error } = useAuth();
   const navigate = useNavigate();
+  const { tema, hasTema } = useTemaLogin();
   const [success, setSuccess] = useState(false);
   const [timer, setTimer] = useState(5);
 
@@ -168,15 +170,30 @@ export default function Signup() {
     }
   };
 
+  const signupStyles = hasTema && tema ? {
+    background: tema.cor_primaria || "#ffffff",
+  } : {};
+
+  const logoSrc =
+    hasTema && tema?.logo_url
+      ? tema.logo_url
+      : "/lovable-uploads/14b51735-5bca-4815-8a9a-30f309cc5b38.png";
+
+  const logoClassName =
+    "mx-auto h-20 w-auto max-h-28 min-h-[4.5rem] max-w-[min(100%,18rem)] sm:h-24 sm:max-h-32 sm:max-w-[20rem] object-contain";
+
   return (
-    <div className="flex items-center justify-center min-h-screen bg-white">
+    <div
+      className="flex items-center justify-center min-h-screen bg-white"
+      style={Object.keys(signupStyles).length ? signupStyles : undefined}
+    >
       <Card className="w-[400px] shadow-lg">
         <CardHeader className="space-y-1 text-center">
-          <div className="flex items-center justify-center mb-4">
-            <img 
-              src="/lovable-uploads/14b51735-5bca-4815-8a9a-30f309cc5b38.png" 
-              alt="SmartCRM Logo" 
-              className="h-12"  
+          <div className="flex min-h-[5.5rem] items-center justify-center px-2 pb-2 pt-1 sm:min-h-[6.5rem]">
+            <img
+              src={logoSrc}
+              alt="SmartCRM Logo"
+              className={logoClassName}
             />
           </div>
           <CardTitle className="text-2xl">Criar Conta</CardTitle>
