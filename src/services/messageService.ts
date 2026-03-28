@@ -12,10 +12,10 @@ interface SendMessageParams {
 function limparTelefone(telefone: string): string {
   // Remover @s.whatsapp.net se existir
   let telefoneLimpo = telefone.replace('@s.whatsapp.net', '');
-  
+
   // Manter apenas números
   telefoneLimpo = telefoneLimpo.replace(/\D/g, '');
-  
+
   return telefoneLimpo;
 }
 
@@ -91,7 +91,7 @@ async function getIdClienteLogado(): Promise<number | null> {
   try {
     // Obter o usuário atual para buscar informações do cliente
     const { data: { user } } = await supabase.auth.getUser();
-    
+
     if (!user) {
       throw new Error('Usuário não autenticado');
     }
@@ -114,11 +114,11 @@ async function getIdClienteLogado(): Promise<number | null> {
       .eq('email', user.email)
       .order('id', { ascending: true })
       .limit(1);
-    
+
     if (clientError || !clientesInfo || clientesInfo.length === 0) {
       return null;
     }
-    
+
     return clientesInfo[0].id;
 
   } catch (error) {
@@ -158,7 +158,7 @@ async function getPrimeiraInstancia(): Promise<string | null> {
   try {
     // Obter o usuário atual para buscar informações do cliente
     const { data: { user } } = await supabase.auth.getUser();
-    
+
     if (!user) {
       throw new Error('Usuário não autenticado');
     }
@@ -177,11 +177,11 @@ async function getPrimeiraInstancia(): Promise<string | null> {
         .select('instance_name')
         .eq('id', atendenteData.id_cliente)
         .single();
-        
+
       if (clientError || !clientInfo?.instance_name) {
         return null;
       }
-      
+
       return clientInfo.instance_name;
     }
 
@@ -192,11 +192,11 @@ async function getPrimeiraInstancia(): Promise<string | null> {
       .eq('email', user.email)
       .order('id', { ascending: true })
       .limit(1);
-    
+
     if (clientError || !clientesInfo || clientesInfo.length === 0) {
       return null;
     }
-    
+
     return clientesInfo[0].instance_name;
 
   } catch (error) {
@@ -250,10 +250,10 @@ async function getChipByDepartment(idCliente: number, telefone: string): Promise
     // ETAPA 3: Decidir qual instância usar e VALIDAR que ela pertence ao cliente
     if (departamentoInstanciaMap[leadData.id_departamento]) {
       const instanceName = departamentoInstanciaMap[leadData.id_departamento];
-      
+
       // VALIDAÇÃO CRÍTICA: Verificar se a instância realmente pertence ao cliente
       const isValid = await validateInstanceBelongsToClient(instanceName, idCliente);
-      
+
       if (isValid) {
         return instanceName;
       } else {
@@ -275,12 +275,12 @@ async function getChipPadraoCliente(): Promise<string | null> {
   try {
     // Obter o usuário atual para buscar informações do cliente
     const { data: { user } } = await supabase.auth.getUser();
-    
+
     if (!user) {
       throw new Error('Usuário não autenticado');
     }
-    
-    
+
+
     // Primeiro, verificar se o usuário é um atendente/gestor
     const { data: atendenteData, error: atendenteError } = await supabase
       .from('atendentes')
@@ -290,22 +290,22 @@ async function getChipPadraoCliente(): Promise<string | null> {
 
     if (atendenteData) {
       // Usuário é atendente/gestor, buscar informações do cliente
-      
+
       const { data: clientInfo, error: clientError } = await supabase
         .from('clientes_info')
         .select('instance_name')
         .eq('id', atendenteData.id_cliente)
         .single();
-        
+
       if (clientError || !clientInfo?.instance_name) {
         throw new Error('Instância do WhatsApp não encontrada para o cliente associado');
       }
-      
+
       return clientInfo.instance_name;
     }
 
     // Usuário é cliente, buscar diretamente na tabela clientes_info
-    
+
     // Buscar todos os registros com este email e pegar o mais antigo (ID menor)
     const { data: clientesInfo, error: clientError } = await supabase
       .from('clientes_info')
@@ -313,21 +313,21 @@ async function getChipPadraoCliente(): Promise<string | null> {
       .eq('email', user.email)
       .order('id', { ascending: true })
       .limit(1);
-    
+
     if (clientError) {
       throw new Error('Erro ao buscar informações do cliente');
     }
-    
+
     if (!clientesInfo || clientesInfo.length === 0) {
       throw new Error('Cliente não encontrado');
     }
-    
+
     const clientInfo = clientesInfo[0];
-    
+
     if (!clientInfo?.instance_name) {
       throw new Error('Chip padrão não configurado para este cliente');
     }
-    
+
     return clientInfo.instance_name;
   } catch (error) {
     throw new Error('Chip padrão não configurado para este cliente');
@@ -345,17 +345,17 @@ async function getWhatsAppInstanceInfoByInstanceName(userEmail: string, instance
 
   if (atendenteData) {
     // Usuário é atendente/gestor, buscar informações do cliente
-    
+
     const { data: clientInfo, error: clientError } = await supabase
       .from('clientes_info')
       .select('instance_name, instance_name_2, apikey')
       .eq('id', atendenteData.id_cliente)
       .single();
-      
+
     if (clientError || !clientInfo) {
       throw new Error('Instância do WhatsApp não encontrada para o cliente associado');
     }
-    
+
     // Verificar se a instância solicitada é o chip 1 ou chip 2
     if (clientInfo.instance_name === instanceName) {
       return {
@@ -374,20 +374,20 @@ async function getWhatsAppInstanceInfoByInstanceName(userEmail: string, instance
   }
 
   // Usuário é cliente, buscar diretamente na tabela clientes_info
-  
+
   const { data: clientesInfo, error: clientError } = await supabase
     .from('clientes_info')
     .select('instance_name, instance_name_2, apikey')
     .eq('email', userEmail)
     .order('id', { ascending: true })
     .limit(1);
-  
+
   if (clientError || !clientesInfo || clientesInfo.length === 0) {
     throw new Error('Erro ao buscar informações do cliente');
   }
-  
+
   const clientInfo = clientesInfo[0];
-  
+
   // Verificar se a instância solicitada é o chip 1 ou chip 2
   if (clientInfo.instance_name === instanceName) {
     return {
@@ -415,33 +415,33 @@ async function getWhatsAppInstanceInfo(userEmail: string) {
 
   if (atendenteData) {
     // Usuário é atendente/gestor, buscar informações do cliente
-    
+
     const { data: clientInfo, error: clientError } = await supabase
       .from('clientes_info')
       .select('instance_name, apikey')
       .eq('id', atendenteData.id_cliente)
       .single();
-      
+
     if (clientError || !clientInfo?.instance_name) {
       console.error(`❌ [${userEmail}] Erro ao buscar instância do cliente:`, clientError);
       throw new Error('Instância do WhatsApp não encontrada para o cliente associado');
     }
-    
+
     return clientInfo;
   }
 
   // Usuário é cliente, buscar diretamente na tabela clientes_info
-  
+
   const { data: clientInfo, error: clientError } = await supabase
     .from('clientes_info')
     .select('instance_name, apikey')
     .eq('email', userEmail)
     .single();
-    
+
   if (clientError || !clientInfo?.instance_name) {
     throw new Error('Instância do WhatsApp não encontrada para este usuário');
   }
-  
+
   return clientInfo;
 }
 
@@ -469,7 +469,7 @@ export async function sendMessageToLead(leadId: number, text: string) {
 
     // Limpar o telefone antes de enviar
     const telefoneLimpo = limparTelefone(leadData.telefone);
-    
+
     // Enviar mensagem usando a função principal, passando idCliente e telefone limpo para busca
     return await sendMessage(leadData.telefone, text, leadData.id_cliente, telefoneLimpo);
   } catch (error) {
@@ -480,25 +480,88 @@ export async function sendMessageToLead(leadId: number, text: string) {
 export async function sendMessage(number: string, text: string, idCliente?: number, telefone?: string) {
   // Obter o usuário atual
   const { data: { user } } = await supabase.auth.getUser();
-  
+
   if (!user) {
     throw new Error('Usuário não autenticado');
   }
-  
+
   // Buscar id_cliente automaticamente se não fornecido
   let clienteId = idCliente;
   if (!clienteId) {
     clienteId = await getIdClienteLogado();
   }
-  
+
+  // Verificar se cliente tem Cloud API ativa
+  if (clienteId) {
+    const { data: metaConn } = await supabase
+      .from("meta_connections")
+      .select("access_token, needs_reauth")
+      .eq("id_cliente", clienteId)
+      .single();
+
+    const { data: waNumber } = await supabase
+      .from("wa_numbers")
+      .select("phone_number_id")
+      .eq("id_cliente", clienteId)
+      .single();
+
+    if (metaConn?.access_token && !metaConn?.needs_reauth && waNumber?.phone_number_id) {
+      const normalizedMetaTo = limparTelefone(number);
+      const metaPayload = {
+        messaging_product: "whatsapp",
+        to: normalizedMetaTo,
+        type: "text",
+        text: { body: text },
+      };
+
+      const metaResponse = await fetch(
+        `https://graph.facebook.com/v21.0/${waNumber.phone_number_id}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${metaConn.access_token}`,
+          },
+          body: JSON.stringify(metaPayload),
+        }
+      );
+
+      if (metaResponse.ok) {
+        getNomeAtendente().then((nome) => {
+          setTimeout(() => updateNomeAtendenteParaUltimaMensagem(number, nome), 1500);
+        }).catch(() => {});
+        return metaResponse.json();
+      }
+      const metaErrorText = await metaResponse.text().catch(() => "");
+      console.error("[META SEND] Falha no envio", {
+        status: metaResponse.status,
+        statusText: metaResponse.statusText,
+        phone_number_id: waNumber.phone_number_id,
+        to: normalizedMetaTo,
+        response: metaErrorText,
+      });
+      // Se token/permissão invalida, força reauth para evitar falso-positivo de conexão.
+      if (clienteId && (metaResponse.status === 401 || metaResponse.status === 403)) {
+        await supabase
+          .from("meta_connections")
+          .update({
+            needs_reauth: true,
+            refresh_error: `meta_send_${metaResponse.status}`,
+          })
+          .eq("id_cliente", clienteId);
+      }
+      // Se falhou, continuar para Evolution/UAZAPI como fallback
+    }
+  }
+
   // Usar o number como telefone se telefone não for fornecido
   let telefoneParaBusca = telefone || number;
-  
+
   // Limpar o telefone para busca
   let telefoneLimpo = limparTelefone(telefoneParaBusca);
-  
+
   let instanceName: string | null;
-  
+
   if (clienteId && telefoneLimpo) {
     // Usar lógica dinâmica baseada no departamento
     instanceName = await getChipByDepartment(clienteId, telefoneLimpo);
@@ -506,15 +569,15 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
     // Usar primeira instância como fallback
     instanceName = await getPrimeiraInstancia();
   }
-  
+
   // Validar se instanceName é válido
   if (!instanceName) {
     throw new Error('Nome da instância não encontrado');
   }
-  
+
   // Buscar informações da instância WhatsApp
   const clientInfo = await getWhatsAppInstanceInfoByInstanceName(user.email, instanceName);
-  
+
   // Preparar dados da requisição Evolution
   const apiUrl = `${API_BASE_URL}/message/sendText/${instanceName}`;
   const requestHeaders = {
@@ -525,7 +588,7 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
     number,
     text
   };
-  
+
   // Tentar enviar para Evolution API
   const evolutionPromise = fetch(apiUrl, {
     method: 'POST',
@@ -559,10 +622,10 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
 
   // Executar ambas em paralelo e aguardar resultados
   const results = await Promise.allSettled([evolutionPromise, uazapiPromise]);
-  
+
   const evolutionResult = results[0];
   const uazapiResult = results[1];
-  
+
   // Se pelo menos uma funcionou, registrar nome_atendente e retornar
   if (evolutionResult.status === 'fulfilled') {
     console.log('✅ Mensagem enviada com sucesso pela Evolution API');
@@ -598,13 +661,13 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
 export async function sendAudioMessage(number: string, audioUrl: string, caption: string = '') {
   // ID único para rastrear esta requisição
   const requestId = `AUDIO_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
+
   try {
     // 🎯 SEMPRE USAR MP3 PARA COMPATIBILIDADE MÁXIMA
     const fileName = `audio_${Date.now()}.mp3`;
     const mimetype = 'audio/mpeg';
     const formatInfo = { nome: 'MP3 (Universal)', whatsappCompatible: true };
-    
+
     // Log detalhado para debug
     console.log(`🎵 [${requestId}] Configuração de áudio (EXCLUSIVAMENTE para novo endpoint):`, {
       audioUrl,
@@ -612,24 +675,24 @@ export async function sendAudioMessage(number: string, audioUrl: string, caption
       mimetype,
       formatInfo: formatInfo.nome
     });
-    
+
     // Obter o usuário atual
     const { data: { user } } = await supabase.auth.getUser();
-    
+
     if (!user) {
       console.error(`❌ [${requestId}] Usuário não autenticado`);
       throw new Error('Usuário não autenticado');
     }
-    
+
     // Obter o chip padrão do cliente (relação com departamentos desabilitada)
     console.log(`🔍 [${requestId}] Buscando chip padrão do cliente...`);
     const instanceName = await getChipPadraoCliente();
     console.log(`📱 [${requestId}] Chip padrão:`, instanceName);
-    
+
     // Buscar informações da instância WhatsApp
     console.log(`🔍 [${requestId}] Buscando informações da instância...`);
     const clientInfo = await getWhatsAppInstanceInfo(user.email);
-    
+
     // Payload otimizado para WhatsApp - SEMPRE MP3
     const requestBody = {
       number,
@@ -640,7 +703,7 @@ export async function sendAudioMessage(number: string, audioUrl: string, caption
       mimetype: mimetype,
       ptt: true  // Push To Talk - mensagem de voz
     };
-    
+
     // Log do payload para debug
     console.log(`📤 [${requestId}] Payload para novo endpoint de áudio:`, {
       number,
@@ -655,7 +718,7 @@ export async function sendAudioMessage(number: string, audioUrl: string, caption
 
     // 🎯 ENVIAR EXCLUSIVAMENTE PARA O NOVO ENDPOINT DE ÁUDIO
     const audioWebhookUrl = 'https://webhook.dev.usesmartcrm.com/webhook/audio-teste';
-    
+
     // Payload para o novo endpoint (mesmo payload + informações adicionais)
     const webhookPayload = {
       ...requestBody,
@@ -663,9 +726,9 @@ export async function sendAudioMessage(number: string, audioUrl: string, caption
       apikey: clientInfo.apikey || 'MI8J85niN3Ir70htmScnxGpGKl2jZgwa', // Chave da API
       user_id: user.id     // ID do usuário
     };
-    
+
     console.log(`📤 [${requestId}] Payload para novo endpoint de áudio:`, webhookPayload);
-    
+
     // Enviar EXCLUSIVAMENTE para o novo endpoint de áudio (não mais para Evolution API)
     try {
       const webhookResponse = await fetch(audioWebhookUrl, {
@@ -675,7 +738,7 @@ export async function sendAudioMessage(number: string, audioUrl: string, caption
         },
         body: JSON.stringify(webhookPayload)
       });
-      
+
       if (webhookResponse.ok) {
         const webhookData = await webhookResponse.json();
         console.log(`✅ [${requestId}] Resposta do novo endpoint de áudio:`, webhookData);
@@ -685,7 +748,7 @@ export async function sendAudioMessage(number: string, audioUrl: string, caption
         return webhookData;
       } else {
         console.error(`❌ [${requestId}] Erro no novo endpoint de áudio: ${webhookResponse.status}`);
-      
+
       let errorData;
       try {
           errorData = await webhookResponse.json();
@@ -693,14 +756,14 @@ export async function sendAudioMessage(number: string, audioUrl: string, caption
       } catch (parseError) {
         errorData = { message: 'Erro desconhecido' };
       }
-      
+
         throw new Error(`Erro ao enviar áudio ${formatInfo.nome}: ${webhookResponse.status} - ${JSON.stringify(errorData)}`);
       }
     } catch (webhookError) {
       console.error(`💥 [${requestId}] ERRO ao enviar para novo endpoint de áudio:`, webhookError);
       throw new Error(`Falha ao enviar áudio para o novo endpoint: ${webhookError.message}`);
     }
-    
+
   } catch (error) {
     console.error(`💥 [${requestId}] ERRO sendAudioMessage:`, error.message);
     throw error;
@@ -710,11 +773,11 @@ export async function sendAudioMessage(number: string, audioUrl: string, caption
 export async function sendImageMessage(number: string, imageUrl: string, caption?: string) {
   // ID único para rastrear esta requisição
   const requestId = `IMAGE_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
+
   // Detectar formato da imagem
   let fileName = `image_${Date.now()}`;
   let mimetype = 'image/jpeg'; // padrão
-  
+
   if (imageUrl.includes('.png')) {
     fileName += '.png';
     mimetype = 'image/png';
@@ -732,31 +795,31 @@ export async function sendImageMessage(number: string, imageUrl: string, caption
     fileName += '.jpg';
     mimetype = 'image/jpeg';
   }
-  
+
   // Obter o usuário atual
   const { data: { user } } = await supabase.auth.getUser();
-  
+
   if (!user) {
     console.error(`❌ [${requestId}] Usuário não autenticado`);
     throw new Error('Usuário não autenticado');
   }
-  
+
   // Obter o chip padrão do cliente (relação com departamentos desabilitada)
   console.log(`🔍 [${requestId}] Buscando chip padrão do cliente...`);
   const instanceName = await getChipPadraoCliente();
   console.log(`📱 [${requestId}] Chip padrão:`, instanceName);
-  
+
   // Buscar informações da instância WhatsApp
   console.log(`🔍 [${requestId}] Buscando informações da instância...`);
   const clientInfo = await getWhatsAppInstanceInfo(user.email);
-  
+
   // Preparar requisição Evolution
   const apiUrl = `${API_BASE_URL}/message/sendMedia/${instanceName}`;
   const requestHeaders = {
     'Content-Type': 'application/json',
     'apikey': clientInfo.apikey || 'MI8J85niN3Ir70htmScnxGpGKl2jZgwa'
   };
-  
+
   const requestBody = {
     number,
     mediatype: 'image',
@@ -765,9 +828,9 @@ export async function sendImageMessage(number: string, imageUrl: string, caption
     fileName: fileName,
     mimetype: mimetype
   };
-  
+
   console.log(`📷 [${requestId}] sendImageMessage: ${number} - URL: ${imageUrl} - File: ${fileName}`);
-  
+
   // Tentar enviar para Evolution API
   const evolutionPromise = fetch(apiUrl, {
     method: 'POST',
@@ -804,10 +867,10 @@ export async function sendImageMessage(number: string, imageUrl: string, caption
 
   // Executar ambas em paralelo e aguardar resultados
   const results = await Promise.allSettled([evolutionPromise, uazapiPromise]);
-  
+
   const evolutionResult = results[0];
   const uazapiResult = results[1];
-  
+
   // Se pelo menos uma funcionou, retornar sucesso
   if (evolutionResult.status === 'fulfilled') {
     console.log(`✅ [${requestId}] Imagem enviada com sucesso pela Evolution API`);
@@ -840,11 +903,11 @@ export async function sendImageMessage(number: string, imageUrl: string, caption
 export async function sendDocumentMessage(number: string, documentUrl: string, fileName: string, caption: string = '') {
   // ID único para rastrear esta requisição
   const requestId = `DOC_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
+
   try {
     // Detectar formato do documento
     let mimetype = 'application/pdf'; // padrão
-    
+
     if (fileName.toLowerCase().endsWith('.pdf')) {
       mimetype = 'application/pdf';
     } else if (fileName.toLowerCase().endsWith('.doc')) {
@@ -865,31 +928,31 @@ export async function sendDocumentMessage(number: string, documentUrl: string, f
       // Fallback
       mimetype = 'application/octet-stream';
     }
-    
+
     // Obter o usuário atual
     const { data: { user } } = await supabase.auth.getUser();
-    
+
     if (!user) {
       console.error(`❌ [${requestId}] Usuário não autenticado`);
       throw new Error('Usuário não autenticado');
     }
-    
+
     // Obter o chip padrão do cliente (relação com departamentos desabilitada)
     console.log(`🔍 [${requestId}] Buscando chip padrão do cliente...`);
     const instanceName = await getChipPadraoCliente();
     console.log(`📱 [${requestId}] Chip padrão:`, instanceName);
-    
+
     // Buscar informações da instância WhatsApp
     console.log(`🔍 [${requestId}] Buscando informações da instância...`);
     const clientInfo = await getWhatsAppInstanceInfo(user.email);
-    
+
     // Preparar requisição Evolution
     const apiUrl = `${API_BASE_URL}/message/sendMedia/${instanceName}`;
     const requestHeaders = {
       'Content-Type': 'application/json',
       'apikey': clientInfo.apikey || 'MI8J85niN3Ir70htmScnxGpGKl2jZgwa'
     };
-    
+
     const requestBody = {
       number,
       mediatype: 'document',
@@ -898,9 +961,9 @@ export async function sendDocumentMessage(number: string, documentUrl: string, f
       fileName: fileName,
       mimetype: mimetype
     };
-    
+
     console.log(`📄 [${requestId}] sendDocumentMessage: ${number} - URL: ${documentUrl} - File: ${fileName}`);
-    
+
     // Tentar enviar para Evolution API
     const evolutionPromise = fetch(apiUrl, {
       method: 'POST',
@@ -938,10 +1001,10 @@ export async function sendDocumentMessage(number: string, documentUrl: string, f
 
     // Executar ambas em paralelo e aguardar resultados
     const results = await Promise.allSettled([evolutionPromise, uazapiPromise]);
-    
+
     const evolutionResult = results[0];
     const uazapiResult = results[1];
-    
+
     // Se pelo menos uma funcionou, registrar nome_atendente e retornar
     if (evolutionResult.status === 'fulfilled') {
       console.log(`✅ [${requestId}] Documento enviado com sucesso pela Evolution API`);
@@ -962,7 +1025,7 @@ export async function sendDocumentMessage(number: string, documentUrl: string, f
     // Se ambas falharam, lançar erro combinado
     const evolutionError = evolutionResult.status === 'rejected' ? evolutionResult.reason : null;
     const uazapiError = uazapiResult.status === 'rejected' ? uazapiResult.reason : null;
-    
+
     const errorMessages = [];
     if (evolutionError) {
       errorMessages.push(`Evolution: ${evolutionError.message || evolutionError}`);
@@ -970,7 +1033,7 @@ export async function sendDocumentMessage(number: string, documentUrl: string, f
     if (uazapiError) {
       errorMessages.push(`UAZAPI: ${uazapiError.message || uazapiError}`);
     }
-    
+
     throw new Error(`Erro ao enviar documento (ambas APIs falharam): ${errorMessages.join(' | ')}`);
   } catch (error) {
     console.error(`💥 [${requestId}] ERRO sendDocumentMessage:`, error);
@@ -981,7 +1044,7 @@ export async function sendDocumentMessage(number: string, documentUrl: string, f
 export async function sendVideoMessage(number: string, videoUrl: string, caption: string = '') {
   // ID único para rastrear esta requisição
   const requestId = `VIDEO_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
+
   // Detectar formato do vídeo
   let fileName = `video_${Date.now()}`;
   let mimetype = 'video/mp4'; // padrão
@@ -1013,16 +1076,16 @@ export async function sendVideoMessage(number: string, videoUrl: string, caption
     console.error(`❌ [${requestId}] Usuário não autenticado`);
     throw new Error('Usuário não autenticado');
   }
-  
+
   // Obter o chip padrão do cliente (relação com departamentos desabilitada)
   console.log(`🔍 [${requestId}] Buscando chip padrão do cliente...`);
   const instanceName = await getChipPadraoCliente();
   console.log(`📱 [${requestId}] Chip padrão:`, instanceName);
-  
+
   // Buscar informações da instância WhatsApp
   console.log(`🔍 [${requestId}] Buscando informações da instância...`);
   const clientInfo = await getWhatsAppInstanceInfo(user.email);
-  
+
   // Preparar requisição Evolution
   const apiUrl = `${API_BASE_URL}/message/sendMedia/${instanceName}`;
   const requestHeaders = {
@@ -1037,7 +1100,7 @@ export async function sendVideoMessage(number: string, videoUrl: string, caption
     fileName: fileName,
     mimetype: mimetype
   };
-  
+
   // Tentar enviar para Evolution API
   const evolutionPromise = fetch(apiUrl, {
     method: 'POST',
@@ -1074,10 +1137,10 @@ export async function sendVideoMessage(number: string, videoUrl: string, caption
 
   // Executar ambas em paralelo e aguardar resultados
   const results = await Promise.allSettled([evolutionPromise, uazapiPromise]);
-  
+
   const evolutionResult = results[0];
   const uazapiResult = results[1];
-  
+
   // Se pelo menos uma funcionou, registrar nome_atendente e retornar
   if (evolutionResult.status === 'fulfilled') {
     console.log(`✅ [${requestId}] Vídeo enviado com sucesso pela Evolution API`);
@@ -1098,7 +1161,7 @@ export async function sendVideoMessage(number: string, videoUrl: string, caption
   // Se ambas falharam, lançar erro combinado
   const evolutionError = evolutionResult.status === 'rejected' ? evolutionResult.reason : null;
   const uazapiError = uazapiResult.status === 'rejected' ? uazapiResult.reason : null;
-  
+
   const errorMessages = [];
   if (evolutionError) {
     errorMessages.push(`Evolution: ${evolutionError.message || evolutionError}`);
@@ -1106,7 +1169,7 @@ export async function sendVideoMessage(number: string, videoUrl: string, caption
   if (uazapiError) {
     errorMessages.push(`UAZAPI: ${uazapiError.message || uazapiError}`);
   }
-  
+
   throw new Error(`Erro ao enviar vídeo (ambas APIs falharam): ${errorMessages.join(' | ')}`);
 }
 
@@ -1134,25 +1197,14 @@ export async function fetchMessagesWithPagination(
   phoneNumber?: string,
   page: number = 0,
   limit: number = 50,
-  fromDate?: string,
-  idCliente?: number
+  fromDate?: string
 ) {
   try {
     let query = supabase
       .from('agente_conversacional_whatsapp')
-      .select('*');
-
-    // Priorizar instanceIds se fornecidos (mais estável para o frontend)
-    if (instanceIds && instanceIds.length > 0) {
-      query = query.in('instance_id', instanceIds);
-    } else if (idCliente) {
-      query = query.eq('id_cliente', idCliente);
-    } else {
-      // Se nenhum filtro for fornecido, retornar vazio
-      return { messages: [], hasMore: false, totalCount: 0 };
-    }
-
-    query = query.order('created_at', { ascending: false });
+      .select('*')
+      .in('instance_id', instanceIds)
+      .order('created_at', { ascending: false });
 
     // Filtrar por telefone se especificado
     if (phoneNumber) {
@@ -1194,29 +1246,16 @@ export async function fetchMessagesWithPagination(
 export async function fetchRecentMessages(
   instanceIds: string[],
   phoneNumber: string,
-  limit: number = 500,
-  idCliente?: number
+  limit: number = 500
 ) {
   try {
-    let query = supabase
+    const { data, error } = await supabase
       .from('agente_conversacional_whatsapp')
-      .select('*');
-
-    // Priorizar instanceIds se fornecidos
-    if (instanceIds && instanceIds.length > 0) {
-      query = query.in('instance_id', instanceIds);
-    } else if (idCliente) {
-      query = query.eq('id_cliente', idCliente);
-    } else {
-      return [];
-    }
-
-    query = query
+      .select('*')
+      .in('instance_id', instanceIds)
       .eq('telefone_id', phoneNumber)
       .order('created_at', { ascending: true })
       .limit(limit);
-
-    const { data, error } = await query;
 
     if (error) {
       console.error('Erro ao buscar mensagens recentes:', error);
@@ -1234,24 +1273,11 @@ export async function fetchRecentMessages(
 export function setupMessagesSubscription(
   instanceIds: string[],
   onNewMessage: (message: any) => void,
-  onError?: (error: any) => void,
-  idCliente?: number
+  onError?: (error: any) => void
 ) {
   try {
-    // Criar canal único
-    const channelName = idCliente 
-      ? `messages_client_${idCliente}_${Date.now()}`
-      : `messages_${instanceIds.join('_')}_${Date.now()}`;
-    
-    // Configurar filtro decido pelo id_cliente ou instance_ids
-    // Nota: Filtros no Realtime do Supabase têm sintaxe específica
-    const filterValue = (instanceIds && instanceIds.length > 0)
-      ? `instance_id=in.(${instanceIds.map(id => `"${id}"`).join(',')})`
-      : idCliente 
-        ? `id_cliente=eq.${idCliente}`
-        : '';
-
-    if (!filterValue) return null;
+    // Criar canal único para evitar duplicações
+    const channelName = `messages_${instanceIds.join('_')}_${Date.now()}`;
 
     const subscription = supabase
       .channel(channelName)
@@ -1261,7 +1287,7 @@ export function setupMessagesSubscription(
           event: 'INSERT',
           schema: 'public',
           table: 'agente_conversacional_whatsapp',
-          filter: filterValue
+          filter: `instance_id=in.(${instanceIds.map(id => `"${id}"`).join(',')})`
         },
         (payload) => {
           console.log('Nova mensagem recebida via subscription:', payload);
@@ -1274,7 +1300,7 @@ export function setupMessagesSubscription(
           event: 'UPDATE',
           schema: 'public',
           table: 'agente_conversacional_whatsapp',
-          filter: filterValue
+          filter: `instance_id=in.(${instanceIds.map(id => `"${id}"`).join(',')})`
         },
         (payload) => {
           console.log('Mensagem atualizada via subscription:', payload);
