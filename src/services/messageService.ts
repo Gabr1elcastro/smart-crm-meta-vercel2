@@ -548,9 +548,38 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
       );
 
       if (metaResponse.ok) {
-        getNomeAtendente().then((nome) => {
-          setTimeout(() => updateNomeAtendenteParaUltimaMensagem(number, nome), 1500);
-        }).catch(() => {});
+        // Persistir a mensagem enviada para que apareça na UI imediatamente
+        try {
+          const { data: cliente } = await supabase
+            .from('clientes_info')
+            .select('instance_id, instance_id_2')
+            .eq('id', clienteId)
+            .single();
+
+          const instanceIdParaExibir = cliente?.instance_id || cliente?.instance_id_2 || null;
+          const telefoneDestinoComSufixo = `${normalizedMetaTo}@s.whatsapp.net`;
+
+          if (instanceIdParaExibir) {
+            await supabase
+              .from('agente_conversacional_whatsapp')
+              .insert({
+                instance_id: instanceIdParaExibir,
+                telefone_id: telefoneDestinoComSufixo,
+                mensagem: text,
+                tipo: true, // enviada por nós
+                foi_lida: true,
+              });
+          }
+        } catch {
+          // não bloquear retorno caso inserção falhe
+        }
+
+        getNomeAtendente()
+          .then((nome) => {
+            setTimeout(() => updateNomeAtendenteParaUltimaMensagem(number, nome), 1500);
+          })
+          .catch(() => {});
+
         return metaResponse.json();
       }
       const metaErrorText = await metaResponse.text().catch(() => "");
