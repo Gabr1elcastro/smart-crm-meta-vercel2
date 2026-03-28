@@ -102,7 +102,15 @@ const normalizePhone = (phone: string): string => {
     const phoneStr = String(phone);
     
     // Remove a parte @s.whatsapp.net e quaisquer caracteres não numéricos
-    const normalized = phoneStr.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+    let normalized = phoneStr.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+    
+    // Ajuste específico para BR: se vier 55 + DDD(2) + número(8) = 12 dígitos, inserir nono dígito
+    if (normalized.startsWith('55') && normalized.length === 12) {
+      const pais = normalized.slice(0, 2);
+      const ddd = normalized.slice(2, 4);
+      const numero8 = normalized.slice(4);
+      normalized = `${pais}${ddd}9${numero8}`;
+    }
     
     return normalized;
   } catch (error) {

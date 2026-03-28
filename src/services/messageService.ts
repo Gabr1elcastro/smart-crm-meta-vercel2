@@ -19,6 +19,26 @@ function limparTelefone(telefone: string): string {
   return telefoneLimpo;
 }
 
+// Ajusta números do Brasil (E.164) garantindo o 9º dígito para celulares
+// Ex.: 557599953901 -> 5575999953901 (insere "9" após o DDD se faltar)
+function normalizarBrasilComNonoDigito(msisdn: string): string {
+  const apenasNumeros = msisdn.replace(/\D/g, '');
+  // Já está correto para BR se tiver 13 dígitos (55 + 2 DDD + 9 + 8)
+  if (apenasNumeros.startsWith('55') && apenasNumeros.length === 13) {
+    return apenasNumeros;
+  }
+  // Caso comum: veio sem o nono dígito (55 + 2 DDD + 8 = 12)
+  if (apenasNumeros.startsWith('55') && apenasNumeros.length === 12) {
+    const pais = apenasNumeros.slice(0, 2); // 55
+    const ddd = apenasNumeros.slice(2, 4);  // DD
+    const numero8 = apenasNumeros.slice(4); // XXXXXXXX
+    // Insere "9" no início do número local
+    return `${pais}${ddd}9${numero8}`;
+  }
+  // Para outros comprimentos/países, retorna só dígitos sem alteração
+  return apenasNumeros;
+}
+
 // Retorna 'admin' se o usuário é admin (clientes_info), senão o nome do atendente (atendentes)
 export async function getNomeAtendente(): Promise<string | null> {
   try {
@@ -506,7 +526,8 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
       .single();
 
     if (metaConn?.access_token && !metaConn?.needs_reauth && waNumber?.phone_number_id) {
-      const normalizedMetaTo = limparTelefone(number);
+      // Meta requer E.164 sem sinais. Para BR, garantir 9º dígito.
+      const normalizedMetaTo = normalizarBrasilComNonoDigito(limparTelefone(number));
       const metaPayload = {
         messaging_product: "whatsapp",
         to: normalizedMetaTo,
@@ -538,6 +559,7 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
         statusText: metaResponse.statusText,
         phone_number_id: waNumber.phone_number_id,
         to: normalizedMetaTo,
+        payload: { ...metaPayload },
         response: metaErrorText,
       });
       // Se token/permissão invalida, força reauth para evitar falso-positivo de conexão.
