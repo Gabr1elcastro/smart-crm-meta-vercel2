@@ -125,12 +125,30 @@ export default function WhatsAppConnectMeta({ email }: WhatsAppConnectMetaProps)
                 body: { code, waba_id, phone_number_id, id_cliente: idCliente },
               })
               .then(({ data, error }) => {
-                if (error || !data?.ok) {
-                  console.error("meta-auth error:", error || data);
+                // supabase.functions.invoke pode retornar data como string quando a Edge Function
+                // não inclui Content-Type: application/json no header — tentamos fazer parse.
+                let payload: { ok?: boolean; phone_number_id?: string; waba_id?: string } | null = null;
+
+                if (data && typeof data === "object") {
+                  payload = data;
+                } else if (typeof data === "string") {
+                  try {
+                    payload = JSON.parse(data);
+                  } catch {
+                    payload = null;
+                  }
+                }
+
+                // Log para debug: mostrar o que chegou de fato
+                console.log("[meta-auth] resposta recebida:", { data, error, payload });
+
+                if (payload?.ok !== true) {
+                  console.error("[meta-auth] falha na conexão:", { error, data, payload });
                   setStatus("error");
                   toast.error("Erro ao autenticar com a Meta");
                   return;
                 }
+
                 setStatus("connected");
                 toast.success("WhatsApp conectado com sucesso!");
 
