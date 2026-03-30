@@ -560,7 +560,7 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
           response: metaSuccessData,
         });
 
-        // Persistir a mensagem enviada para que apareça na UI imediatamente
+        // Encaminhar para webhook externo (n8n) em vez de persistir direto no banco
         try {
           const { data: cliente } = await supabase
             .from('clientes_info')
@@ -571,40 +571,50 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
           const instanceIdParaExibir = cliente?.instance_id || cliente?.instance_id_2 || null;
           const telefoneDestinoComSufixo = `${normalizedMetaTo}@s.whatsapp.net`;
 
-          if (instanceIdParaExibir) {
-            const { error: persistError } = await supabase
-              .from('agente_conversacional_whatsapp')
-              .insert({
-                instance_id: instanceIdParaExibir,
-                telefone_id: telefoneDestinoComSufixo,
-                mensagem: text,
-                tipo: true, // enviada por nós
-                foi_lida: true,
-              });
+          const webhookPayload = {
+            id_cliente: clienteId,
+            instance_id: instanceIdParaExibir,
+            telefone_id: telefoneDestinoComSufixo,
+            mensagem: text,
+            tipo: true, // enviada por nós
+            foi_lida: true,
+            canal: "whatsapp",
+            origem: "meta_cloud_api",
+            meta: {
+              phone_number_id: waNumber.phone_number_id,
+              to: normalizedMetaTo,
+              response: metaSuccessData,
+            },
+            timestamp: new Date().toISOString(),
+          };
 
-            if (persistError) {
-              console.error("[META SEND] Envio ok, mas falhou ao persistir no Supabase", {
-                clienteId,
-                instance_id: instanceIdParaExibir,
-                telefone_id: telefoneDestinoComSufixo,
-                error: persistError,
-              });
-            } else {
-              console.log("[META SEND] Persistência local concluída com sucesso", {
-                clienteId,
-                instance_id: instanceIdParaExibir,
-                telefone_id: telefoneDestinoComSufixo,
-              });
-            }
+          const webhookResponse = await fetch("https://workflow.dev.usesmartcrm.com/webhook-test/envio-n8n", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(webhookPayload),
+          });
+
+          if (!webhookResponse.ok) {
+            const webhookErrorText = await webhookResponse.text().catch(() => "");
+            console.error("[META SEND] Envio ok, mas falhou ao encaminhar payload para webhook", {
+              status: webhookResponse.status,
+              statusText: webhookResponse.statusText,
+              response: webhookErrorText,
+              payload: webhookPayload,
+            });
           } else {
-            console.warn("[META SEND] Envio ok, mas sem instance_id para persistir na UI", {
-              clienteId,
-              normalizedMetaTo,
+            const webhookResult = await webhookResponse.json().catch(() => ({}));
+            console.log("[META SEND] Payload encaminhado para webhook com sucesso", {
+              webhook_url: "https://workflow.dev.usesmartcrm.com/webhook-test/envio-n8n",
+              payload: webhookPayload,
+              response: webhookResult,
             });
           }
-        } catch (persistException) {
-          console.error("[META SEND] Envio ok, exceção inesperada ao persistir no Supabase", persistException);
-          // não bloquear retorno caso inserção falhe
+        } catch (webhookException) {
+          console.error("[META SEND] Envio ok, exceção inesperada ao encaminhar payload para webhook", webhookException);
+          // não bloquear retorno caso webhook falhe
         }
 
         getNomeAtendente()
@@ -613,7 +623,7 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
           })
           .catch(() => {});
 
-        console.log("[META SEND] Fluxo de sucesso finalizado (Meta -> persistência -> retorno)");
+        console.log("[META SEND] Fluxo de sucesso finalizado (Meta -> webhook -> retorno)");
         return metaSuccessData;
       }
       const metaErrorText = await metaResponse.text().catch(() => "");
