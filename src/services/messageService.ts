@@ -588,7 +588,7 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
             timestamp: new Date().toISOString(),
           };
 
-          const webhookResponse = await fetch("https://workflow.dev.usesmartcrm.com/webhook-test/envio-n8n", {
+          const webhookResponse = await fetch("https://webhook.dev.usesmartcrm.com/webhook/envio-n8n", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -607,7 +607,7 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
           } else {
             const webhookResult = await webhookResponse.json().catch(() => ({}));
             console.log("[META SEND] Payload encaminhado para webhook com sucesso", {
-              webhook_url: "https://workflow.dev.usesmartcrm.com/webhook-test/envio-n8n",
+              webhook_url: "https://webhook.dev.usesmartcrm.com/webhook/envio-n8n",
               payload: webhookPayload,
               response: webhookResult,
             });
