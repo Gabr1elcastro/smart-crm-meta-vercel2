@@ -548,6 +548,18 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
       );
 
       if (metaResponse.ok) {
+        const metaSuccessData = await metaResponse.json();
+        console.log("[META SEND] Envio concluído com sucesso", {
+          status: metaResponse.status,
+          phone_number_id: waNumber.phone_number_id,
+          to: normalizedMetaTo,
+          payload_preview: {
+            type: metaPayload.type,
+            text_length: text.length,
+          },
+          response: metaSuccessData,
+        });
+
         // Persistir a mensagem enviada para que apareça na UI imediatamente
         try {
           const { data: cliente } = await supabase
@@ -560,7 +572,7 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
           const telefoneDestinoComSufixo = `${normalizedMetaTo}@s.whatsapp.net`;
 
           if (instanceIdParaExibir) {
-            await supabase
+            const { error: persistError } = await supabase
               .from('agente_conversacional_whatsapp')
               .insert({
                 instance_id: instanceIdParaExibir,
@@ -569,8 +581,29 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
                 tipo: true, // enviada por nós
                 foi_lida: true,
               });
+
+            if (persistError) {
+              console.error("[META SEND] Envio ok, mas falhou ao persistir no Supabase", {
+                clienteId,
+                instance_id: instanceIdParaExibir,
+                telefone_id: telefoneDestinoComSufixo,
+                error: persistError,
+              });
+            } else {
+              console.log("[META SEND] Persistência local concluída com sucesso", {
+                clienteId,
+                instance_id: instanceIdParaExibir,
+                telefone_id: telefoneDestinoComSufixo,
+              });
+            }
+          } else {
+            console.warn("[META SEND] Envio ok, mas sem instance_id para persistir na UI", {
+              clienteId,
+              normalizedMetaTo,
+            });
           }
-        } catch {
+        } catch (persistException) {
+          console.error("[META SEND] Envio ok, exceção inesperada ao persistir no Supabase", persistException);
           // não bloquear retorno caso inserção falhe
         }
 
@@ -580,7 +613,8 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
           })
           .catch(() => {});
 
-        return metaResponse.json();
+        console.log("[META SEND] Fluxo de sucesso finalizado (Meta -> persistência -> retorno)");
+        return metaSuccessData;
       }
       const metaErrorText = await metaResponse.text().catch(() => "");
       console.error("[META SEND] Falha no envio", {
@@ -606,10 +640,10 @@ export async function sendMessage(number: string, text: string, idCliente?: numb
   }
 
   // Usar o number como telefone se telefone não for fornecido
-  let telefoneParaBusca = telefone || number;
+  const telefoneParaBusca = telefone || number;
 
   // Limpar o telefone para busca
-  let telefoneLimpo = limparTelefone(telefoneParaBusca);
+  const telefoneLimpo = limparTelefone(telefoneParaBusca);
 
   let instanceName: string | null;
 
