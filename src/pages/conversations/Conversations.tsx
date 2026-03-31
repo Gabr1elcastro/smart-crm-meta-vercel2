@@ -379,15 +379,6 @@ export const Conversations = () => {
     }
   }, [user?.id_cliente, user?.email]);
 
-  // Carregar leads assim que id_cliente estiver disponível (antes de buscar mensagens)
-  useEffect(() => {
-    if (user?.id_cliente) {
-      LeadsService.getLeadsByClientId(user.id_cliente).then((data) => {
-        setLeads(data);
-      });
-    }
-  }, [user?.id_cliente]);
-
   // 2. Função para construir a lista de contatos a partir das mensagens
   const buildContacts = useCallback(async (messages: Conversation[]) => {
     const seen = new Map<string, Contact>();
@@ -750,30 +741,6 @@ export const Conversations = () => {
         setIsSending(false);
         return;
       }
-
-      // Otimismo: adicionar a mensagem enviada imediatamente na UI
-      const optimisticMsg: Conversation = {
-        id: `optimistic_${Date.now()}` as any,
-        created_at: new Date().toISOString() as any,
-        updated_at: new Date().toISOString() as any,
-        mensagem: messageText,
-        tipo_mensagem: 'texto' as any,
-        tipo: true as any,
-        timestamp: new Date().toISOString() as any,
-        conversa_id: '' as any,
-        instance_id: (contact?.instance_id || instanceId1 || instanceId2 || '') as any,
-        user_id: (user?.id || '') as any,
-        telefone: normalizePhoneOnlyNumber(telefoneEnvio) as any,
-        telefone_id: telefoneEnvio as any,
-        name: contact?.name || '' as any,
-        foi_lida: true as any,
-        nome_atendente: null as any,
-      };
-      setConversations(prev => {
-        const next = [ ...prev, optimisticMsg ];
-        setTimeout(() => buildContacts(next), 0);
-        return next;
-      });
 
       // Envio padrão Evolution (verificado em messageService.ts)
       await sendMessage(telefoneEnvio, messageText);
